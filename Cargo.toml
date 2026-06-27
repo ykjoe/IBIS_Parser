@@ -1,0 +1,8 @@
+[package]
+name = "ibis_parser"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+eframe = "0.35"
+egui_plot = "0.36"
