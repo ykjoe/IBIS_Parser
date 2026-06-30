@@ -1,23 +1,23 @@
-use crate::ibis_parser::ibis_structure::IBIS_File;
+// =============================================================================
+// IBIS Parser Core API
+// =============================================================================
+
+use std::fs;
+use std::path::Path;
+
+use crate::ibis_parser::converter::ibs2toml;
 
 /// Parse raw IBIS file content into the AST representation.
+pub fn ibis_file_parse(_content: &str) -> Result<(), String> {
+    todo!("implement IBIS file parser");
+}
+
+/// Read an IBIS file and produce a `.ibs.toml` representation.
 ///
-/// Returns `Ok(IBIS_File)` on success, or `Err(reason)` with a human-readable
-/// description when the content cannot be parsed.
-pub fn ibis_file_parse(_content: &str) -> Result<IBIS_File, String> {
-    // TODO: implement actual IBIS parsing logic
-    //
-    // Parsing flow (to be implemented):
-    //   1. Parse header fields
-    //   2. Parse [Component] sections
-    //   3. Parse [Model] / [Submodel] sections
-    //   4. Parse remaining optional sections
-    //   5. Assemble and return the complete IBIS_File
-    //
-    // On any parsing error:
-    //   return Err("specific error message".to_string());
-    //
-    let ibis_parse_result: IBIS_File = todo!("implement IBIS file parser");
-    
-    Ok(ibis_parse_result)
+/// The function uses pest to find all keyword headers, splits the file into
+/// section blocks, and serializes them to TOML.
+pub fn ibs2ibstoml<P: AsRef<Path>>(path: P) -> Result<String, String> {
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    ibs2toml(&content)
 }

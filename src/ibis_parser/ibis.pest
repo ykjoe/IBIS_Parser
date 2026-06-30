@@ -51,6 +51,7 @@ ramp_value    = { si_number ~ "/" ~ si_number }
 
 
 
+
 // =============================================================================
 // File Header Section
 // =============================================================================
@@ -86,6 +87,8 @@ header_copyright_continuation  = { WHITESPACE* ~ "|" ~ text_line }
 
 
 
+
+
 // =============================================================================
 // Component & Pin Sub-syntax
 // =============================================================================
@@ -99,6 +102,8 @@ line_component    = { kw_component ~ ident }
 line_manufacturer = { kw_manufacturer ~ text_line }
 
 line_pin_data     = { ident ~ ident ~ ident ~ (si_number ~ si_number ~ si_number)? }
+
+
 
 
 

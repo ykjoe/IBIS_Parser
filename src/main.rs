@@ -1,31 +1,24 @@
 use std::path::Path;
-use std::fs;
 
 mod ibis_parser;
 
-use ibis_parser::core::ibis_file_parse;
-use ibis_parser::ibis_structure::IBIS_File;
-
-#[derive(Debug)]
-enum IbisFileReadError {
-    FileNotFound,
-    ParserFailed,
-}
-
-
-fn ibis_file_read<P: AsRef<Path>>(path: P) -> Result<IBIS_File, IbisFileReadError> {
-    let content = fs::read_to_string(&path)
-        .map_err(|_| IbisFileReadError::FileNotFound)?;
-    let ibis_file = ibis_file_parse(&content)
-        .map_err(|_| IbisFileReadError::ParserFailed);
-
-    ibis_file
-}
+use ibis_parser::core::ibs2ibstoml;
 
 fn main() {
-    match ibis_file_read("tests/f103c8.ibs") {
-        Ok(ibis_file) => println!("Parsed IBIS file: {:?}", ibis_file),
-        Err(IbisFileReadError::FileNotFound) => eprintln!("Error: file not found"),
-        Err(IbisFileReadError::ParserFailed) => eprintln!("Error: parser failed"),
+    let path = "tests/f103c8.ibs";
+    match ibs2ibstoml(path) {
+        Ok(toml_str) => {
+            // Write output to .ibs.toml
+            let out_path = format!("{}.toml", path);
+            std::fs::write(&out_path, &toml_str)
+                .expect("Failed to write output file");
+            println!("TOML output written to: {}", out_path);
+            println!("\n--- Preview ---");
+            // Print first 80 lines as preview
+            for line in toml_str.lines().take(80) {
+                println!("{}", line);
+            }
+        }
+        Err(e) => eprintln!("Error: {}", e),
     }
 }
