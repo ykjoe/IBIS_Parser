@@ -1,3 +1,5 @@
+#![allow(non_camel_case_types)]
+
 use std::collections::HashMap;
 
 // -----------------------------------------------------------------------------
@@ -546,7 +548,7 @@ pub struct InterconnectModel {
     pub interconnect_model: String,
     pub param: Option<String>,
     pub file_ts: Option<String>,     
-    pub file_IBIS__iss: Option<String>, 
+    pub file_ibis_iss: Option<String>, 
     pub unused_port_termination: Option<f64>,
     pub number_of_terminals: Option<usize>,
 }

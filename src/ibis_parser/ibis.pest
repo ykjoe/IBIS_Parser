@@ -1,0 +1,117 @@
+// =============================================================================
+// IBIS Parser — pest grammar
+//
+// This grammar is designed for parsing individual IBIS values, not the entire
+// file. The top-level file structure (section splitting, table rows) is
+// handled by hand-written Rust code.
+// =============================================================================
+
+
+
+// =============================================================================
+// Shared primitives (Chap3.2 in standard document)
+// =============================================================================
+
+// -------------------------- basic symbols --------------------------
+WHITESPACE = _{ " " | "\t" }
+
+// -------------------------- basic grammar --------------------------
+text_line = @{ (!("\r" | "\n") ~ ANY)* }
+
+comment_line = _{ WHITESPACE* ~ "|" ~ text_line }
+
+ibis_char = _{ 
+    ASCII_ALPHA | ASCII_DIGIT | "_" | "-" | "." | "$" | "~" | "!" | "#" | "%" 
+    | "&" | "{" | "}" | "(" | ")" | "@" | "^" | "*" | "=" | "'" | "?" | "`"
+    | "[" | "]"
+}
+ident = @{ ibis_char+ }
+
+keyword_header = { "[" ~ keyword_body ~ "]" }
+keyword_body   = @{ (ASCII_ALPHA | "_" | " ")+ }
+
+// -------------- math & physical expression grammar ----------------
+si_prefix = { "f" | "p" | "n" | "u" | "m" | "k" | "M" | "G" | "T" }
+unit      = { "Ohm" | "V" | "A" | "F" | "H" | "W" | "Hz" | "s" }
+
+si_number = @{
+    ("+" | "-")? ~ 
+    (
+        (ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT*) | 
+        ("." ~ ASCII_DIGIT+) | 
+        ASCII_DIGIT+
+    ) ~ 
+    ( ^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+ )? ~ 
+    ( si_prefix ~ unit? | unit )?
+}
+
+corner_values = { si_number ~ si_number ~ si_number }
+ramp_value    = { si_number ~ "/" ~ si_number }
+
+
+
+
+// =============================================================================
+// File Header Section
+// =============================================================================
+
+// ---------------------------- keywords  ----------------------------
+kw_ibis_ver     = { "[" ~ ^"IBIS Ver" ~ "]" }
+kw_comment_char = { "[" ~ ^"Comment Char" ~ "]" }
+kw_file_name    = { "[" ~ ^"File Name" ~ "]" }
+kw_file_rev     = { "[" ~ ^"File Rev" ~ "]" }
+kw_date         = { "[" ~ ^"Date" ~ "]" }
+kw_source       = { "[" ~ ^"Source" ~ "]" }
+kw_notes        = { "[" ~ ^"Notes" ~ "]" }
+kw_disclaimer   = { "[" ~ ^"Disclaimer" ~ "]" }
+kw_copyright    = { "[" ~ ^"Copyright" ~ "]" }
+
+// ---------------------------- contents  ----------------------------
+header_ibis_ver     = { kw_ibis_ver ~ si_number }
+header_comment_char = { kw_comment_char ~ ident }
+header_file_name    = { kw_file_name ~ ident }
+header_file_rev     = { kw_file_rev ~ text_line }
+header_date         = { kw_date ~ text_line }
+header_source       = { kw_source ~ text_line }
+
+// ---------------------------- comments  ----------------------------
+header_notes_line              = { kw_notes ~ text_line }
+header_notes_continuation      = { WHITESPACE* ~ "|" ~ text_line }
+
+header_disclaimer_line         = { kw_disclaimer ~ text_line }
+header_disclaimer_continuation = { WHITESPACE* ~ "|" ~ text_line }
+
+header_copyright_line          = { kw_copyright ~ text_line }
+header_copyright_continuation  = { WHITESPACE* ~ "|" ~ text_line }
+
+
+
+// =============================================================================
+// Component & Pin Sub-syntax
+// =============================================================================
+
+kw_component    = { "[" ~ ^"Component" ~ "]" }
+kw_manufacturer = { "[" ~ ^"Manufacturer" ~ "]" }
+kw_package      = { "[" ~ ^"Package" ~ "]" }
+kw_pin          = { "[" ~ ^"Pin" ~ "]" }
+
+line_component    = { kw_component ~ ident }
+line_manufacturer = { kw_manufacturer ~ text_line }
+
+line_pin_data     = { ident ~ ident ~ ident ~ (si_number ~ si_number ~ si_number)? }
+
+
+
+// =============================================================================
+// Model & Selector Sub-syntax
+// =============================================================================
+
+kw_model          = { "[" ~ ^"Model" ~ "]" }
+kw_model_selector = { "[" ~ ^"Model Selector" ~ "]" }
+
+line_model          = { kw_model ~ ident }
+line_model_selector = { kw_model_selector ~ ident }
+
+line_selector_entry = { ident ~ text_line }
+
+line_subparam_value = { ident ~ (corner_values | text_line) }
