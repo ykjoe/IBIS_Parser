@@ -1,3 +1,12 @@
+//! Integration tests for IBIS file header parsing.
+//!
+//! Parses the file header from a real sample IBIS file and verifies each field.
+//! Run with:
+//!
+//! ```sh
+//! cargo test --test header_parse_test -- --nocapture
+//! ```
+
 // =============================================================================
 // Integration test: parse File Header from sample IBIS file → TOML output
 //
@@ -7,13 +16,30 @@
 use std::fs;
 use std::path::Path;
 
-use ibis_parser::ibis_parser::parser::{
-    header_to_toml, identify_section_keyword, is_continuation_line, parse_continuation_content,
+use ibis_parser::ibis2ibstoml::syntax_analy::{
+    identify_section_keyword, is_continuation_line, parse_continuation_content,
     parse_header_line,
 };
 use ibis_parser::ibis_parser::ibis_structure::IBIS_FileHeader;
 
 /// Parse the file header section from an IBIS file path.
+///
+/// Reads the file, extracts recognised header fields (IBIS ver, File name, etc.),
+/// and returns both the structured header and the raw header lines.
+///
+/// # Parameters
+///
+/// * `path` — Path to an `.ibs` file. Accepts any type implementing [`AsRef<Path>`].
+///
+/// # Returns
+///
+/// A tuple of:
+/// * `(IBIS_FileHeader, Vec<String>)` — The parsed header struct and the raw
+///   header lines as they appear in the file.
+///
+/// # Panics
+///
+/// Panics if the file cannot be read.
 fn parse_file_header<P: AsRef<Path>>(path: P) -> (IBIS_FileHeader, Vec<String>) {
     let content = fs::read_to_string(path).expect("Failed to read IBIS file");
     let lines: Vec<&str> = content.lines().collect();
@@ -102,7 +128,7 @@ fn parse_file_header<P: AsRef<Path>>(path: P) -> (IBIS_FileHeader, Vec<String>) 
 
 #[test]
 fn test_parse_file_header_from_sample() {
-    let (header, raw_lines) = parse_file_header("tests/f103c8.ibs");
+    let (header, raw_lines) = parse_file_header("tests/examples/f103c8.ibs");
 
     println!("========================================");
     println!("Raw header lines:");
@@ -112,12 +138,17 @@ fn test_parse_file_header_from_sample() {
     }
 
     println!("\n========================================");
-    println!("Parsed header (TOML):");
+    println!("Parsed header fields:");
     println!("========================================");
-    match header_to_toml(&header) {
-        Ok(toml_str) => println!("{}", toml_str),
-        Err(e) => eprintln!("TOML serialization error: {}", e),
-    }
+    println!("  ibis_ver:      {:?}", header.ibis_ver);
+    println!("  comment_char:  {:?}", header.comment_char);
+    println!("  file_name:     {:?}", header.file_name);
+    println!("  file_rev:      {:?}", header.file_rev);
+    println!("  date:          {:?}", header.date);
+    println!("  source:        {:?}", header.source);
+    println!("  notes:         {:?}", header.notes);
+    println!("  disclaimer:    {:?}", header.disclaimer);
+    println!("  copyright:     {:?}", header.copyright);
 
     // Verify required fields
     assert!(!header.ibis_ver.is_empty(), "IBIS ver should not be empty");

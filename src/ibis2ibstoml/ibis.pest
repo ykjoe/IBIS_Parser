@@ -1,0 +1,70 @@
+// =============================================================================
+// ibis.pest — pest grammar for IBIS keyword header recognition
+//
+// Design constraints:
+//   - First layer only: identifies [Keyword] headers and basic line structure.
+//   - NO specific keyword names — keyword classification is handled in Rust.
+//   - Numeric rules (si_number) defined for matching only, never for conversion.
+//   - File structure splitting is handled by Rust code.
+// =============================================================================
+
+
+
+// =============================================================================
+// Lexical primitives — basic tokens and patterns
+// =============================================================================
+
+// -------------------------- basic symbols --------------------------
+WHITESPACE  = _{ " " | "\t" }
+
+text_line   = @{ (!("\r" | "\n") ~ ANY)* }
+
+ibis_char   = _{ ASCII_ALPHA | ASCII_DIGIT | "_" | "-" | "." | "$" | "~"
+               | "!" | "#" | "%" | "&" | "{" | "}" | "(" | ")" | "@" | "^"
+               | "*" | "=" | "'" | "?" | "`" | "[" | "]" }
+
+ident       = @{ ibis_char+ }
+
+// -------------------------- math & physical expressions --------------------------
+si_prefix   = { "f" | "p" | "n" | "u" | "m" | "k" | "M" | "G" | "T" }
+
+unit        = { "Ohm" | "V" | "A" | "F" | "H" | "W" | "Hz" | "s" }
+
+si_number   = @{
+    ("+" | "-")? ~
+    (
+        (ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT*) |
+        ("." ~ ASCII_DIGIT+) |
+        ASCII_DIGIT+
+    ) ~
+    ( ^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+ )? ~
+    ( si_prefix ~ unit? | unit )?
+}
+
+
+
+// =============================================================================
+// Syntax structure — line-level patterns
+// =============================================================================
+
+// ============================ keyword headers ============================
+keyword  = @{ "[" ~ (ASCII_ALPHA | "_" | " ")+ ~ "]" }
+
+comment  = _{ "|" ~ text_line }
+
+// ============================ content lines ============================
+kv_line  = { ident ~ (si_number | ident | "/" | "=")+ }
+
+data_line = { (si_number | ident | "/" | "=")+ }
+
+
+
+// =============================================================================
+// File topology
+// =============================================================================
+
+ibis_file = {
+    SOI ~
+    ( keyword | comment | kv_line | data_line )*
+    ~ EOI
+}

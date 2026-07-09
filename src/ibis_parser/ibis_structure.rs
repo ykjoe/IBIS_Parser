@@ -1,3 +1,20 @@
+//! IBIS 7.0 semantic AST structures (ground-truth type definitions).
+//!
+//! This module defines the complete set of strongly-typed data structures
+//! representing a fully parsed IBIS file, as specified by the IBIS 7.0 standard.
+//! All types are intended to be constructed by the second-pass semantic analysis
+//! phase (not yet implemented).
+//!
+//! # Organisation
+//!
+//! | Section | Types |
+//! |---------|-------|
+//! | [File Header](IBIS_FileHeader) | `IBIS_FileHeader` |
+//! | [Component](IBIS_Component) | `IBIS_Component`, `PinInfo`, `DiffPin`, etc. |
+//! | [Model](IBIS_Model) | `IBIS_Model`, `Ramp`, `WaveformFixture`, etc. |
+//! | Package Model | `IBIS_DefinePackageModel`, `PackagePinNumbers` |
+//! | Other | `IBIS_Submodel`, `IBIS_ExternalCircuit`, `IBIS_TestData`, etc. |
+
 #![allow(non_camel_case_types)]
 
 use std::collections::HashMap;
@@ -6,6 +23,16 @@ use std::collections::HashMap;
 // Core Type Definitions & Tables
 // -----------------------------------------------------------------------------
 
+/// A generic typical/min/max corner-value container.
+///
+/// Many IBIS parameters are specified as a triplet of values representing
+/// typical, minimum, and maximum operating corners.
+///
+/// # Parameters
+///
+/// * `typ` — The typical (nominal) value.
+/// * `min` — The minimum value, if specified.
+/// * `max` — The maximum value, if specified.
 #[derive(Debug)]
 pub struct Triplet<T> {
     pub typ: T,
@@ -13,6 +40,10 @@ pub struct Triplet<T> {
     pub max: Option<T>,
 }
 
+/// Shorthand for a floating-point [`Triplet<f64>`].
+///
+/// Used throughout the IBIS structure for electrical parameters such as
+/// resistances, capacitances, voltages, and timings.
 pub type IBIS_CornerValue = Triplet<f64>;
 
 /// Tabular data wrapper for curves, wave tables, and RLGC matrices

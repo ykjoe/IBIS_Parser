@@ -1,0 +1,563 @@
+# ==============================================================================
+# 0. 根文件 & 1. 文件头部分 (File Header Section)
+# ==============================================================================
+[IBISFileHeader]
+ibis_ver = "String"
+comment_char = "Option<char>"
+file_name = "String"
+file_rev = "String"
+date = "Option<String>"
+source = "Option<String>"
+notes = "Option<String>"
+disclaimer = "Option<String>"
+copyright = "Option<String>"
+
+# ==============================================================================
+# 2. 组件声明入口 (IBISComponent 及其子结构)
+# ==============================================================================
+[IBISComponent]
+component = "String"
+si_location = "Option<String>"
+timing_location = "Option<String>"
+
+    [IBISComponent.Manufacturer]
+    manufacturer = "String"
+
+    # [Package]
+    [IBISComponent.Package]
+    r_pkg = "IBISCornerValue"
+    l_pkg = "IBISCornerValue"
+    c_pkg = "IBISCornerValue"
+
+    # [Pin]
+    [[IBISComponent.Pin]]
+    pin_name = "String"
+    signal_name = "String"
+    model_name = "String"
+    r_pin = "Option<String>"
+    l_pin = "Option<String>"
+    c_pin = "Option<String>"
+
+    # [Package Model] -> [Alternate Package Models]
+    [IBISComponent.PackageModel]
+    package_model = "String"
+        [IBISComponent.PackageModel.AlternatePackageModels]
+        alternate_package_models = "Vec<String>"
+
+    # [Interconnect Model Group]
+    [[IBISComponent.InterconnectModelGroup]]
+    interconnect_model_group = "String"
+
+    # [Pin Mapping]
+    [[IBISComponent.PinMapping]]
+    pin_name = "String"
+    pulldown_ref = "String"
+    pullup_ref = "String"
+    gnd_clamp_ref = "Option<String>"
+    power_clamp_ref = "Option<String>"
+    ext_ref = "Option<String>"
+
+    # [Bus Label]
+    [[IBISComponent.BusLabel]]
+    bus_label = "String"
+    signal_name = "String"
+
+    # [Die Supply Pads]
+    [[IBISComponent.DieSupplyPads]]
+    pad_name = "String"
+    signal_name = "String"
+    bus_label = "Option<String>"
+
+    # [Diff Pin]
+    [[IBISComponent.DiffPin]]
+    pin_name = "String"
+    inv_pin = "String"
+    vdiff = "String"
+    tdelay_typ = "String"
+    tdelay_min = "Option<String>"
+    tdelay_max = "Option<String>"
+
+    # [Repeater Pin]
+    [[IBISComponent.RepeaterPin]]
+    tx_non_inv_pin = "String"
+
+    # [Series Pin Mapping]
+    [[IBISComponent.SeriesPinMapping]]
+    pin_1 = "String"
+    pin_2 = "String"
+    model_name = "String"
+    function_table_group = "Option<String>"
+
+    # [Series Switch Groups]
+    [[IBISComponent.SeriesSwitchGroups]]
+    on = "String"
+    off = "String"
+
+    # [Node Declarations]
+    [IBISComponent.NodeDeclarations]
+    node_declarations = "Vec<String>"
+
+    # [Circuit Call]
+    [[IBISComponent.CircuitCall]]
+    signal_pin = "String"
+    diff_signal_pins = "Option<String>"
+    series_pins = "Option<String>"
+    port_map = "Option<String>"
+    converter_parameters = "Option<String>"
+    parameters = "Option<String>"
+
+    # [Begin EMI Component]
+    [IBISComponent.BeginEMIComponent]
+    domain = "String"
+    cpd = "String"
+    c_heatsink_gnd = "String"
+    c_heatsink_float = "String"
+        # [Pin EMI] 
+        [[IBISComponent.BeginEMIComponent.PinEMI]]
+        domain_name = "String"
+        clock_div = "String"
+        [[IBISComponent.BeginEMIComponent.PinDomainEMI]]
+        percentage = "String"
+
+# ==============================================================================
+# 3. 模型选择器入口 (IBISModelSelector)
+# ==============================================================================
+[[IBISModelSelector]]
+model_selector = "String"
+
+# ==============================================================================
+# 4. 模型核心 definition 入口 (IBISModel 及其子结构)
+# ==============================================================================
+[[IBISModel]]
+model = "String"
+model_type = "String"
+polarity = "Option<String>"
+enable = "Option<String>"
+vinl = "Option<String>"
+vinh = "Option<String>"
+c_comp = "Option<String>"
+c_comp_pullup = "Option<String>"
+c_comp_pulldown = "Option<String>"
+c_comp_power_clamp = "Option<String>"
+c_comp_gnd_clamp = "Option<String>"
+vmeas = "Option<String>"
+cref = "Option<String>"
+rref = "Option<String>"
+vref = "Option<String>"
+rref_diff = "Option<String>"
+cref_diff = "Option<String>"
+
+    # [Model Spec]
+    [IBISModel.ModelSpec]
+    vinh = "Option<String>"
+    vinl = "Option<String>"
+    vinh_plus = "Option<String>"
+    vinh_minus = "Option<String>"
+    vinl_plus = "Option<String>"
+    vinl_minus = "Option<String>"
+    s_overshoot_high = "Option<String>"
+    s_overshoot_low = "Option<String>"
+    d_overshoot_high = "Option<String>"
+    d_overshoot_low = "Option<String>"
+    d_overshoot_time = "Option<String>"
+    d_overshoot_area_h = "Option<String>"
+    d_overshoot_area_l = "Option<String>"
+    d_overshoot_ampl_h = "Option<String>"
+    d_overshoot_ampl_l = "Option<String>"
+    pulse_high = "Option<String>"
+    pulse_low = "Option<String>"
+    pulse_time = "Option<String>"
+    weak_r = "Option<String>"
+    weak_i = "Option<String>"
+    weak_v = "Option<String>"
+
+    # [Receiver Thresholds]
+    [IBISModel.ReceiverThresholds]
+    vth = "String"
+    vth_min = "Option<String>"
+    vth_max = "Option<String>"
+    vinh_ac = "Option<String>"
+    vinh_dc = "Option<String>"
+    vinl_ac = "Option<String>"
+    vinl_dc = "Option<String>"
+    threshold_sensitivity = "Option<String>"
+    reference_supply = "Option<String>"
+    vcross_low = "Option<String>"
+    vcross_high = "Option<String>"
+    vdiff_ac = "Option<String>"
+    vdiff_dc = "Option<String>"
+    tslew_ac = "Option<String>"
+    tdiffslew_ac = "Option<String>"
+
+    [IBISModel.AddSubmodel]
+    add_submodel = "String"
+
+    [IBISModel.DriverSchedule]
+    driver_schedule = "String"
+
+    # 各类 Reference / Range
+    [IBISModel.TemperatureRange]
+    temperature_range = "IBISCornerValue"
+
+    [IBISModel.VoltageRange]
+    voltage_range = "IBISCornerValue"
+
+    [IBISModel.PullupReference]
+    pullup_reference = "Option<IBISCornerValue>"
+
+    [IBISModel.PulldownReference]
+    pulldown_reference = "Option<IBISCornerValue>"
+
+    [IBISModel.PowerClampReference]
+    power_clamp_reference = "Option<IBISCornerValue>"
+
+    [IBISModel.GndClampReference]
+    gnd_clamp_reference = "Option<IBISCornerValue>"
+
+    [IBISModel.ExternalReference]
+    external_reference = "Option<IBISCornerValue>"
+
+    # [C Comp Corner]
+    [IBISModel.CCompCorner]
+    c_comp = "IBISCornerValue"
+    c_comp_pullup = "Option<IBISCornerValue>"
+    c_comp_pulldown = "Option<IBISCornerValue>"
+    c_comp_power_clamp = "Option<IBISCornerValue>"
+    c_comp_gnd_clamp = "Option<IBISCornerValue>"
+
+    [IBISModel.Ttgnd]
+    ttgnd = "Option<String>"
+    [IBISModel.Ttpower]
+    ttpower = "Option<String>"
+
+    # I-V 数据表
+    [IBISModel.Pulldown]
+    rows = "IBISTableData"
+
+    [IBISModel.Pullup]
+    rows = "IBISTableData"
+
+    [IBISModel.GndClamp]
+    rows = "IBISTableData"
+
+    [IBISModel.PowerClamp]
+    rows = "IBISTableData"
+
+    [IBISModel.IssoPu]
+    rows = "IBISTableData"
+
+    [IBISModel.IssoPd]
+    rows = "IBISTableData"
+
+
+    # 阻抗项
+    [IBISModel.Rgnd]
+    rgnd = "Option<String>"
+
+    [IBISModel.Rpower]
+    rpower = "Option<String>"
+
+    [IBISModel.Rac]
+    rac = "Option<String>"
+
+    [IBISModel.Cac]
+    cac = "Option<String>"
+
+    [IBISModel.On]
+    on = "Option<String>"
+
+    [IBISModel.Off]
+    off = "Option<String>"
+
+
+    # Series 系列
+    [IBISModel.RSeries]
+    r_series = "Option<String>"
+
+    [IBISModel.LSeries]
+    l_series = "Option<String>"
+
+    [IBISModel.RlSeries]
+    rl_series = "Option<String>"
+
+    [IBISModel.CSeries]
+    c_series = "Option<String>"
+
+    [IBISModel.LcSeries]
+    lc_series = "Option<String>"
+
+    [IBISModel.RcSeries]
+    rc_series = "Option<String>"
+
+    [IBISModel.SeriesCurrent]
+    seriescurrent = "IBISTableData"
+    
+    [IBISModel.SeriesMosfet]
+    vds = "String"
+
+    # [Ramp]
+    [IBISModel.Ramp]
+    dv_dt_r = "IBISCornerValue"
+    dv_dt_f = "IBISCornerValue"
+    r_load = "Option<String>"
+
+    # [Rising Waveform]
+    [[IBISModel.RisingWaveform]]
+    r_fixture = "String"
+    v_fixture = "String"
+    v_fixture_min = "Option<String>"
+    v_fixture_max = "Option<String>"
+    c_fixture = "Option<String>"
+    l_fixture = "Option<String>"
+    r_dut = "Option<String>"
+    l_dut = "Option<String>"
+    c_dut = "Option<String>"
+        # [Composite Current] 
+        [IBISModel.RisingWaveform.CompositeCurrent]
+        composite_current = "Option<String>"
+
+    # [Falling Waveform]
+    [[IBISModel.FallingWaveform]]
+    r_fixture = "String"
+    v_fixture = "String"
+    v_fixture_min = "Option<String>"
+    v_fixture_max = "Option<String>"
+    c_fixture = "Option<String>"
+    l_fixture = "Option<String>"
+    r_dut = "Option<String>"
+    l_dut = "Option<String>"
+    c_dut = "Option<String>"
+        # [Composite Current]
+        [IBISModel.FallingWaveform.CompositeCurrent]
+        composite_current = "Option<String>"
+
+    # [Initial Delay]
+    [IBISModel.InitialDelay]
+    v_t = "Option<String>"
+    i_t = "Option<String>"
+
+    # [External Model]
+    [IBISModel.ExternalModel]
+    language = "String"
+    corner = "String"
+    parameters = "Option<String>"
+    converter_parameters = "Option<String>"
+    ports = "Option<String>"
+    d_to_a = "Option<String>"
+    a_to_d = "Option<String>"
+
+    # [Algorithmic Model]
+    [IBISModel.AlgorithmicModel]
+    executable = "String"
+    executable_rx = "Option<String>"
+    executable_tx = "Option<String>"
+
+    # [Begin EMI Model]
+    [IBISModel.BeginEMIModel]
+    model_emi_type = "String"
+    model_domain = "String"
+
+# ==============================================================================
+# 5. 独立一级子模型定义 (IBISSubmodel)
+# ==============================================================================
+[[IBISSubmodel]]
+submodel = "String"
+submodel_type = "String"
+
+    [IBISSubmodel.SubmodelSpec]
+    v_trigger_r = "Option<String>"
+    v_trigger_f = "Option<String>"
+    off_delay = "Option<String>"
+
+    [IBISSubmodel.PowerPulseTable]
+    rows = "IBISTableData"
+
+    [IBISSubmodel.GndPulseTable]
+    rows = "IBISTableData"
+
+    [IBISSubmodel.Pulldown]
+    rows = "IBISTableData"
+
+    [IBISSubmodel.Pullup]
+    rows = "IBISTableData"
+
+    [IBISSubmodel.GndClamp]
+    rows = "IBISTableData"
+
+    [IBISSubmodel.PowerClamp]
+    rows = "IBISTableData"
+
+    [IBISSubmodel.Ramp]
+    dv_dt_r = "IBISCornerValue"
+    dv_dt_f = "IBISCornerValue"
+    r_load = "Option<String>"
+
+    [IBISSubModel.RisingWaveform]
+    r_fixture = "String"
+    v_fixture = "String"
+    v_fixture_min = "Option<String>"
+    v_fixture_max = "Option<String>"
+    c_fixture = "Option<String>"
+    l_fixture = "Option<String>"
+    r_dut = "Option<String>"
+    l_dut = "Option<String>"
+    c_dut = "Option<String>"
+
+    [IBISSubModel.FallingWaveform]
+    r_fixture = "String"
+    v_fixture = "String"
+    v_fixture_min = "Option<String>"
+    v_fixture_max = "Option<String>"
+    c_fixture = "Option<String>"
+    l_fixture = "Option<String>"
+    r_dut = "Option<String>"
+    l_dut = "Option<String>"
+    c_dut = "Option<String>"
+
+    [IBISSubModel.InitialDelay]
+    v_t = "Option<String>"
+    i_t = "Option<String>"
+
+# ==============================================================================
+# 6. 独立外部电路定义 (IBISExternalCircuit)
+# ==============================================================================
+[[IBISExternalCircuit]]
+language = "String"
+corner = "String"
+parameters = "Option<String>"
+converter_parameters = "Option<String>"
+ports = "Option<String>"
+d_to_a = "Option<String>"
+a_to_d = "Option<String>"
+
+# ==============================================================================
+# 7. 测试数据定义部分 (IBISTestData & IBISTestLoad)
+# ==============================================================================
+[[IBISTestData]]
+test_data = "String"
+test_data_type = "String"
+driver_model = "String"
+driver_model_inv = "Option<String>"
+test_load = "String"
+rising_waveform_near = "Option<IBISTableData>"
+falling_waveform_near = "Option<IBISTableData>"
+rising_waveform_far = "Option<IBISTableData>"
+falling_waveform_far = "Option<IBISTableData>"
+diff_rising_waveform_near = "Option<IBISTableData>"
+diff_falling_waveform_near = "Option<IBISTableData>"
+diff_rising_waveform_far = "Option<IBISTableData>"
+diff_falling_waveform_far = "Option<IBISTableData>"
+
+[[IBISTestLoad]]
+test_load = "String"
+test_load_type = "String"
+c1_near = "Option<String>"
+rs_near = "Option<String>"
+ls_near = "Option<String>"
+c2_near = "Option<String>"
+rp1_near = "Option<String>"
+rp2_near = "Option<String>"
+td = "Option<String>"
+zo = "Option<String>"
+rp1_far = "Option<String>"
+rp2_far = "Option<String>"
+c2_far = "Option<String>"
+ls_far = "Option<String>"
+rs_far = "Option<String>"
+c1_far = "Option<String>"
+v_term1 = "Option<String>"
+v_term2 = "Option<String>"
+receiver_model = "Option<String>"
+receiver_model_inv = "Option<String>"
+r_diff_near = "Option<String>"
+r_diff_far = "Option<String>"
+
+# ==============================================================================
+# 8. 独立包模型定义 (IBISDefinePackageModel)
+# ==============================================================================
+[[IBISDefinePackageModel]]
+define_package_model = "String"
+
+    # [Manufacturer]
+    [IBISDefinePackageModel.Manufacturer]
+    manufacturer = "String"
+
+    # [OEM]
+    [IBISDefinePackageModel.OEM]
+    oem = "String"
+
+    # [Description]
+    [IBISDefinePackageModel.Description]
+    description = "String"
+
+    # [Number Of Sections]
+    [IBISDefinePackageModel.NumberOfSections]
+    number_of_sections = "String"
+
+    # [Number Of Pins]
+    [IBISDefinePackageModel.NumberOfPins]
+    number_of_pins = "String"
+
+    # [Pin Numbers]
+    [IBISDefinePackageModel.PinNumbers]
+    len = "String"
+    l = "Option<String>"
+    r = "Option<String>"
+    c = "Option<String>"
+    fork = "Option<String>"
+    endfork = "Option<String>"
+
+    # [Merged Pins]
+    [IBISDefinePackageModel.MergedPins]
+    merged_pins = "Vec<String>"
+
+    # [Model Data]
+    [IBISDefinePackageModel.ModelData]
+    # 注：[End Model Data] 可作为解析此处的闭合标志
+
+        # [Resistance Matrix]
+        [IBISDefinePackageModel.ModelData.ResistanceMatrix]
+        row = "IBISTableData"
+
+            # [Bandwidth] (嵌套在 Resistance Matrix 下)
+            [IBISDefinePackageModel.ModelData.ResistanceMatrix.Bandwidth]
+            bandwidth = "String"
+
+        # [Inductance Matrix]
+        [IBISDefinePackageModel.ModelData.InductanceMatrix]
+        row = "IBISTableData"
+
+            # [Bandwidth] (嵌套在 Inductance Matrix 下)
+            [IBISDefinePackageModel.ModelData.InductanceMatrix.Bandwidth]
+            bandwidth = "String"
+
+        # [Capacitance Matrix]
+        [IBISDefinePackageModel.ModelData.CapacitanceMatrix]
+        row = "IBISTableData"
+
+            # [Bandwidth] (嵌套在 Capacitance Matrix 下)
+            [IBISDefinePackageModel.ModelData.CapacitanceMatrix.Bandwidth]
+            bandwidth = "String"
+
+# ==============================================================================
+# 9. 独立互连模型集合 (IBISInterconnectModelSet)
+# ==============================================================================
+[[IBISInterconnectModelSet]]
+interconnect_model_set = "String"
+
+    # [Manufacturer]
+    [IBISInterconnectModelSet.Manufacturer]
+    manufacturer = "String"
+
+    # [Description]
+    [IBISInterconnectModelSet.Description]
+    description = "String"
+
+    # [Interconnect Model]
+    [[IBISInterconnectModelSet.InterconnectModel]]
+    interconnect_model = "String" # 代表模型名
+    param = "Option<String>"
+    file_ts = "Option<String>"
+    file_ibis_iss = "Option<String>"
+    unused_port_termination = "Option<String>"
+    number_of_terminals = "Option<String>"
