@@ -16,7 +16,7 @@
 use std::fs;
 use std::path::Path;
 
-use ibis_parser::ibis2ibstoml::syntax_analy::{
+use ibis_parser::ibis2ibstoml::frontend::{
     identify_section_keyword, is_continuation_line, parse_continuation_content,
     parse_header_line,
 };

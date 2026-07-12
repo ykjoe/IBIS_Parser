@@ -5,14 +5,13 @@
 use std::fs;
 use std::path::Path;
 
-use crate::ibis2ibstoml::lexical_analy::tokenize;
-use crate::ibis2ibstoml::syntax_analy::ibs2toml;
+use crate::ibis2ibstoml::frontend::parse_to_toml;
 
 /// Read an IBIS file and produce a `.ibs.toml` representation.
 ///
-/// The function uses a two-phase pipeline:
-/// 1. **Lexical analysis** ([`tokenize`]) — pest-based tokenization into keyword blocks.
-/// 2. **Syntax analysis** ([`ibs2toml`]) — keyword classification, tree building, TOML output.
+/// The function uses a single-pass pipeline:
+/// 1. **Frontend parsing** ([`parse_to_toml`]) — pest-based full parsing
+///    (lexical + syntax) and direct TOML serialization.
 ///
 /// # Parameters
 ///
@@ -25,13 +24,11 @@ use crate::ibis2ibstoml::syntax_analy::ibs2toml;
 ///
 /// # Errors
 ///
-/// Returns `Err` if the file cannot be read from disk, if the content is not valid
-/// IBIS syntax, or if TOML serialisation fails.
+/// Returns `Err` if the file cannot be read from disk, or if the content cannot be parsed.
 ///
 /// # Panics
 ///
-/// Does not panic under normal operation. Panics only if the internal write
-/// buffer cannot accept the serialised output (a programming error).
+/// Does not panic under normal operation.
 ///
 /// # Examples
 ///
@@ -43,14 +40,10 @@ use crate::ibis2ibstoml::syntax_analy::ibs2toml;
 /// assert!(toml_output.contains("[File_Header]"));
 /// ```
 
-
 pub fn ibs2ibstoml<P: AsRef<Path>>(path: P) -> Result<String, String> {
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
-    // Phase 1: lexical analysis (pest-based tokenization)
-    let tokens = tokenize(&content);
-
-    // Phase 2: syntax analysis (classification + tree + TOML)
-    ibs2toml(tokens)
+    // Single-pass frontend: pest full parsing → TOML output
+    parse_to_toml(&content)
 }

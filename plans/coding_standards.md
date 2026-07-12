@@ -327,23 +327,31 @@ fn is_array_parent(keyword: &str) -> bool {
 所有 struct 字段必须显式标注类型，禁止依赖类型推断。
 
 ```rust
-// ✅ 正确
+// ✅ 正确：行尾注释，简洁不重复
+#[derive(Debug, Clone)]
+struct ParsedBlock {
+    keyword: String,       // Raw keyword name (e.g., "Component", "IBIS ver").
+    rule: Rule,            // Pest rule variant that matched this header.
+    content: Vec<String>,  // Content lines belonging to this block.
+}
+
+// ❌ 错误：/// 注释冗余，重复字段名，占用额外行
 #[derive(Debug, Clone)]
 struct Section {
-    /// The classified keyword that identifies this section.
-    kind: Keyword,
-    /// The raw content lines belonging to this section.
+    /// The keyword name.
+    keyword: String,
+    /// The content lines belonging to this section.
     content: Vec<String>,
-    /// Child sections nested under this parent.
-    children: Vec<Section>,
 }
 ```
 
 **规则**：
-- 每个字段必须有 `///` 文档注释
+- 字段注释用行尾 `//` 而非字段上方 `///`
+- 注释内容应补充字段名无法表达的语义，**禁止重复字段名**
 - 必须派生 `Debug`（`Clone` 视情况）
 - 字段命名必须完整：`kind` 而非 `k`，`content` 而非 `c`
 - `Vec<T>` 字段不包装 `Option`，空 Vec 即表示"无数据"
+- 行尾 `//` 注释右对齐（同一结构体内保持一致的缩进位置）
 
 ### 5.4 泛型约束
 

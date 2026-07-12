@@ -1,21 +1,24 @@
 // =============================================================================
-// ibis.pest — pest grammar for IBIS keyword header recognition
+// ibis.pest — pest grammar for IBIS file parsing
 //
 // Design constraints:
-//   - First layer only: identifies [Keyword] headers and basic line structure.
-//   - NO specific keyword names — keyword classification is handled in Rust.
+//   - Block A: Lexical primitives (basic tokens, numbers, units).
+//   - Block B: Syntax rules (specific keyword headers, content lines, file topology).
+//   - All kw_* rules follow the kw_1级_2级 naming convention.
+//   - The generic `keyword` rule serves as fallback for unrecognized keywords.
+//   - NEWLINE and WHITESPACE are consumed between items in ibis_file.
 //   - Numeric rules (si_number) defined for matching only, never for conversion.
-//   - File structure splitting is handled by Rust code.
 // =============================================================================
 
 
 
 // =============================================================================
-// Lexical primitives — basic tokens and patterns
+// Block A: Lexical primitives — basic tokens and patterns
 // =============================================================================
 
 // -------------------------- basic symbols --------------------------
 WHITESPACE  = _{ " " | "\t" }
+NEWLINE     = _{ "\r\n" | "\n" | "\r" }
 
 text_line   = @{ (!("\r" | "\n") ~ ANY)* }
 
@@ -44,18 +47,138 @@ si_number   = @{
 
 
 // =============================================================================
-// Syntax structure — line-level patterns
+// Block B: Syntax rules — keyword-specific grammar and file topology
 // =============================================================================
 
 // ============================ keyword headers ============================
-keyword  = @{ "[" ~ (ASCII_ALPHA | "_" | " ")+ ~ "]" }
+// -------- file header keyword --------
+kw_file_header_ibis_ver       = { "[" ~ "IBIS ver" ~ "]" }
+kw_file_header_comment_char   = { "[" ~ "Comment Char" ~ "]" }
+kw_file_header_file_name      = { "[" ~ "File name" ~ "]" }
+kw_file_header_file_rev       = { "[" ~ "File Rev" ~ "]" }
+kw_file_header_date           = { "[" ~ "Date" ~ "]" }
+kw_file_header_source         = { "[" ~ "Source" ~ "]" }
+kw_file_header_notes          = { "[" ~ "Notes" ~ "]" }
+kw_file_header_disclaimer     = { "[" ~ "Disclaimer" ~ "]" }
+kw_file_header_copyright      = { "[" ~ "Copyright" ~ "]" }
 
-comment  = _{ "|" ~ text_line }
+// -------- first-level container group (9 types per IBIS 7.0 spec) --------
+first_level_keyword = {
+    kw_component | kw_model | kw_submodel | kw_external_circuit
+    | kw_test_data | kw_test_load | kw_define_package_model
+    | kw_interconnect_model_set | kw_model_selector
+}
+
+// -------- component keyword --------
+kw_component                       = { "[" ~ "Component" ~ "]" }
+kw_component_manufacturer          = { "[" ~ "Manufacturer" ~ "]" }
+kw_component_package               = { "[" ~ "Package" ~ "]" }
+kw_component_pin                   = { "[" ~ "Pin" ~ "]" }
+kw_component_pin_mapping           = { "[" ~ "Pin Mapping" ~ "]" }
+kw_component_package_model         = { "[" ~ "Package Model" ~ "]" }
+kw_component_series_pin_mapping    = { "[" ~ "Series Pin Mapping" ~ "]" }
+kw_component_differential_pin_mapping = { "[" ~ "Differential Pin Mapping" ~ "]" }
+
+// -------- model keyword --------
+kw_model                          = { "[" ~ "Model" ~ "]" }
+kw_model_model_spec               = { "[" ~ "Model Spec" ~ "]" }
+kw_model_temperature_range        = { "[" ~ "Temperature Range" ~ "]" }
+kw_model_voltage_range            = { "[" ~ "Voltage Range" ~ "]" }
+kw_model_pulldown                 = { "[" ~ "Pulldown" ~ "]" }
+kw_model_pullup                   = { "[" ~ "Pullup" ~ "]" }
+kw_model_gnd_clamp                = { "[" ~ "GND Clamp" ~ "]" }
+kw_model_power_clamp              = { "[" ~ "POWER Clamp" ~ "]" }
+kw_model_gnd_table                = { "[" ~ "GND Table" ~ "]" }
+kw_model_power_table              = { "[" ~ "POWER Table" ~ "]" }
+kw_model_ramp                     = { "[" ~ "Ramp" ~ "]" }
+kw_model_rising_waveform          = { "[" ~ "Rising Waveform" ~ "]" }
+kw_model_falling_waveform         = { "[" ~ "Falling Waveform" ~ "]" }
+kw_model_series_current           = { "[" ~ "Series Current" ~ "]" }
+kw_model_series_mosfet            = { "[" ~ "Series MOSFET" ~ "]" }
+kw_model_threshold_sensitivity    = { "[" ~ "Threshold Sensitivity" ~ "]" }
+kw_model_driver_schedule          = { "[" ~ "Driver Schedule" ~ "]" }
+kw_model_reference_supply         = { "[" ~ "Reference Supply" ~ "]" }
+
+// -------- submodel keyword --------
+kw_submodel                       = { "[" ~ "Submodel" ~ "]" }
+kw_submodel_pulldown              = { "[" ~ "Pulldown" ~ "]" }
+kw_submodel_pullup                = { "[" ~ "Pullup" ~ "]" }
+kw_submodel_gnd_clamp             = { "[" ~ "GND Clamp" ~ "]" }
+kw_submodel_power_clamp           = { "[" ~ "POWER Clamp" ~ "]" }
+kw_submodel_ramp                  = { "[" ~ "Ramp" ~ "]" }
+
+// -------- external circuit keyword --------
+kw_external_circuit               = { "[" ~ "External Circuit" ~ "]" }
+kw_external_circuit_circuit_model = { "[" ~ "Circuit Model" ~ "]" }
+kw_external_circuit_port_map      = { "[" ~ "Port Map" ~ "]" }
+
+// -------- test data keyword --------
+kw_test_data                      = { "[" ~ "Test Data" ~ "]" }
+
+// -------- test load keyword --------
+kw_test_load                      = { "[" ~ "Test Load" ~ "]" }
+kw_test_load_reference_supply     = { "[" ~ "Reference Supply" ~ "]" }
+kw_test_load_pulldown             = { "[" ~ "Pulldown" ~ "]" }
+kw_test_load_pullup               = { "[" ~ "Pullup" ~ "]" }
+kw_test_load_gnd_clamp            = { "[" ~ "GND Clamp" ~ "]" }
+kw_test_load_power_clamp          = { "[" ~ "POWER Clamp" ~ "]" }
+
+// -------- define package model keyword --------
+kw_define_package_model           = { "[" ~ "Define Package Model" ~ "]" }
+kw_define_package_model_package_model = { "[" ~ "Package Model" ~ "]" }
+kw_define_package_model_pin_mapping   = { "[" ~ "Pin Mapping" ~ "]" }
+
+// -------- interconnect model set keyword --------
+kw_interconnect_model_set                = { "[" ~ "Interconnect Model Set" ~ "]" }
+kw_interconnect_model_set_interconnect_model = { "[" ~ "Interconnect Model" ~ "]" }
+kw_interconnect_model_set_port_map       = { "[" ~ "Port Map" ~ "]" }
+kw_interconnect_model_set_manchester_encoder = { "[" ~ "Manchester Encoder" ~ "]" }
+kw_interconnect_model_set_pin_mapping    = { "[" ~ "Pin Mapping" ~ "]" }
+
+// -------- model selector keyword --------
+kw_model_selector                 = { "[" ~ "Model Selector" ~ "]" }
+kw_model_selector_model_list      = { "[" ~ "Model List" ~ "]" }
+
+// -------- second-level container group --------
+second_level_keyword = {
+    kw_file_header_ibis_ver | kw_file_header_comment_char
+    | kw_file_header_file_name | kw_file_header_file_rev
+    | kw_file_header_date | kw_file_header_source
+    | kw_file_header_notes | kw_file_header_disclaimer
+    | kw_file_header_copyright
+    | kw_component_manufacturer | kw_component_package | kw_component_pin
+    | kw_component_pin_mapping | kw_component_package_model
+    | kw_component_series_pin_mapping | kw_component_differential_pin_mapping
+    | kw_model_model_spec | kw_model_temperature_range | kw_model_voltage_range
+    | kw_model_pulldown | kw_model_pullup | kw_model_gnd_clamp
+    | kw_model_power_clamp | kw_model_gnd_table | kw_model_power_table
+    | kw_model_ramp | kw_model_rising_waveform | kw_model_falling_waveform
+    | kw_model_series_current | kw_model_series_mosfet
+    | kw_model_threshold_sensitivity | kw_model_driver_schedule
+    | kw_model_reference_supply
+    | kw_submodel_pulldown | kw_submodel_pullup | kw_submodel_gnd_clamp
+    | kw_submodel_power_clamp | kw_submodel_ramp
+    | kw_external_circuit_circuit_model | kw_external_circuit_port_map
+    | kw_test_load_reference_supply | kw_test_load_pulldown
+    | kw_test_load_pullup | kw_test_load_gnd_clamp | kw_test_load_power_clamp
+    | kw_define_package_model_package_model | kw_define_package_model_pin_mapping
+    | kw_interconnect_model_set_interconnect_model
+    | kw_interconnect_model_set_port_map
+    | kw_interconnect_model_set_manchester_encoder
+    | kw_interconnect_model_set_pin_mapping
+    | kw_model_selector_model_list
+}
+
+// End marker
+kw_end                 = { "[" ~ "End" ~ "]" }
+
+// Generic keyword fallback (for unrecognized keywords)
+keyword                = @{ "[" ~ (ASCII_ALPHA | "_" | " ")+ ~ "]" }
 
 // ============================ content lines ============================
-kv_line  = { ident ~ (si_number | ident | "/" | "=")+ }
+content_line = { (si_number | ident | "/" | "=")+ }
 
-data_line = { (si_number | ident | "/" | "=")+ }
+comment     = _{ "|" ~ text_line }
 
 
 
@@ -65,6 +188,9 @@ data_line = { (si_number | ident | "/" | "=")+ }
 
 ibis_file = {
     SOI ~
-    ( keyword | comment | kv_line | data_line )*
+    ( NEWLINE | WHITESPACE
+    | first_level_keyword | second_level_keyword | kw_end | keyword
+    | content_line | comment
+    )*
     ~ EOI
 }

@@ -12,7 +12,7 @@ file_rev = "1.1"
 [File_Header.Date]
 date = "12-08-2024"
 
-[[Component]]
+[Component]
 component = "STM32F103C8"
 
 [Component.Manufacturer]
@@ -72,7 +72,7 @@ diff_pin = [
     "32 33 0 na na na"
 ]
 
-[[Model]]
+[Model]
 model = [
     "IO8FT",
     "Model_type       I/O",
@@ -80,10 +80,10 @@ model = [
     "Enable           Active-Low",
     "Vinl = 0.8",
     "Vinh = 2.0",
-    "Vmeas = 1.65V    | Reference voltage for timing measurements",
-    "Cref  = 50.0pF   | Timing specification test load capacitance value",
-    "Rref  = 100.0MOhm   | Timing specification test load resistance value",
-    "Vref  = 1.65V   | Timing specification test load voltage",
+    "Vmeas = 1.65V",
+    "Cref  = 50.0pF",
+    "Rref  = 100.0MOhm",
+    "Vref  = 1.65V",
     "C_comp           1.12p 0.79p 1.15p"
 ]
 
@@ -365,7 +365,7 @@ ramp = [
     "R_load = 1.0000k"
 ]
 
-[[Model]]
+[Model]
 model = [
     "IO8TC",
     "Model_type       I/O",
@@ -373,10 +373,10 @@ model = [
     "Enable           Active-Low",
     "Vinl = 0.8",
     "Vinh = 2.0",
-    "Vmeas = 1.65V    | Reference voltage for timing measurements",
-    "Cref  = 50.0pF   | Timing specification test load capacitance value",
-    "Rref  = 100.0MOhm   | Timing specification test load resistance value",
-    "Vref  = 1.65V   | Timing specification test load voltage",
+    "Vmeas = 1.65V",
+    "Cref  = 50.0pF",
+    "Rref  = 100.0MOhm",
+    "Vref  = 1.65V",
     "C_comp            1.12p 0.79p 1.15p"
 ]
 
@@ -658,7 +658,7 @@ ramp = [
     "R_load = 1.0000k"
 ]
 
-[[Model]]
+[Model]
 model = [
     "IO8I2CINFT",
     "Model_type       I/O",
@@ -666,10 +666,10 @@ model = [
     "Enable           Active-Low",
     "Vinl = 0.8",
     "Vinh = 2.0",
-    "Vmeas = 1.65V    | Reference voltage for timing measurements",
-    "Cref  = 50.0pF   | Timing specification test load capacitance value",
-    "Rref  = 100.0MOhm   | Timing specification test load resistance value",
-    "Vref  = 1.65V   | Timing specification test load voltage",
+    "Vmeas = 1.65V",
+    "Cref  = 50.0pF",
+    "Rref  = 100.0MOhm",
+    "Vref  = 1.65V",
     "C_comp           1.12p 0.79p 1.15p"
 ]
 
@@ -951,16 +951,16 @@ ramp = [
     "R_load = 1.0000k"
 ]
 
-[[Model]]
+[Model]
 model = [
     "USBFS",
     "Model_type       I/O",
     "Polarity         Non-Inverting",
     "Enable           Active-Low",
-    "Vmeas = 1.65V    | Reference voltage for timing measurements",
-    "Cref  = 50.0pF   | Timing specification test load capacitance value",
-    "Rref  = 100.0MOhm   | Timing specification test load resistance value",
-    "Vref  = 1.65V   | Timing specification test load voltage",
+    "Vmeas = 1.65V",
+    "Cref  = 50.0pF",
+    "Rref  = 100.0MOhm",
+    "Vref  = 1.65V",
     "C_comp           2.1500pF            1.7500pF            2.5000pF",
     "Vinh = 1.75V",
     "Vinl = 1.55V"
