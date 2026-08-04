@@ -2,15 +2,10 @@
 //!
 //! Parses a hard-coded sample IBIS file (`tests/examples/f103c8.ibs`) and writes
 //! the TOML output to `<input>.ibs.toml`.  This is a development/debugging binary;
-//! production use should call the library API [`ibis2ibstoml::core::ibs2ibstoml`]
+//! production use should call the library API [`ibis2ibstoml::ibs2ibstoml`]
 //! directly.
 
-use std::path::Path;
-
-mod ibis2ibstoml;
-mod ibis_parser;
-
-use ibis2ibstoml::core::ibs2ibstoml;
+use ibis2ibstoml::ibs2ibstoml;
 
 fn main() {
     let path = "tests/examples/f103c8.ibs";

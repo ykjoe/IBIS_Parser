@@ -1316,11 +1316,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "ibis_parser"
+name = "ibis2ibstoml"
 version = "0.1.0"
 dependencies = [
  "pest",
  "pest_derive",
+]
+
+[[package]]
+name = "ibis_parser"
+version = "0.1.0"
+dependencies = [
+ "ibis2ibstoml",
  "serde",
  "serde_json",
  "tauri",

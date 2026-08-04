@@ -50,6 +50,50 @@ si_number   = @{
 // Block B: Syntax rules — keyword-specific grammar and file topology
 // =============================================================================
 
+// ========================================
+// =               keyword                =
+// ========================================
+// ======================== keyword container groups ========================
+// -------- Generic keyword fallback (for unrecognized keywords) --------
+keyword                = @{ "[" ~ (ASCII_ALPHA | "_" | " ")+ ~ "]" }
+
+// -------- first-level container group --------
+first_level_keyword = {
+    kw_component | kw_model | kw_submodel | kw_external_circuit
+    | kw_test_data | kw_test_load | kw_define_package_model
+    | kw_interconnect_model_set | kw_model_selector
+}
+
+// -------- second-level container group --------
+second_level_keyword = {
+    kw_file_header_ibis_ver | kw_file_header_comment_char
+    | kw_file_header_file_name | kw_file_header_file_rev
+    | kw_file_header_date | kw_file_header_source
+    | kw_file_header_notes | kw_file_header_disclaimer
+    | kw_file_header_copyright
+    | kw_component_manufacturer | kw_component_package | kw_component_pin
+    | kw_component_pin_mapping | kw_component_package_model
+    | kw_component_series_pin_mapping | kw_component_differential_pin_mapping
+    | kw_model_model_spec | kw_model_temperature_range | kw_model_voltage_range
+    | kw_model_pulldown | kw_model_pullup | kw_model_gnd_clamp
+    | kw_model_power_clamp | kw_model_gnd_table | kw_model_power_table
+    | kw_model_ramp | kw_model_rising_waveform | kw_model_falling_waveform
+    | kw_model_series_current | kw_model_series_mosfet
+    | kw_model_threshold_sensitivity | kw_model_driver_schedule
+    | kw_model_reference_supply
+    | kw_submodel_pulldown | kw_submodel_pullup | kw_submodel_gnd_clamp
+    | kw_submodel_power_clamp | kw_submodel_ramp
+    | kw_external_circuit_circuit_model | kw_external_circuit_port_map
+    | kw_test_load_reference_supply | kw_test_load_pulldown
+    | kw_test_load_pullup | kw_test_load_gnd_clamp | kw_test_load_power_clamp
+    | kw_define_package_model_package_model | kw_define_package_model_pin_mapping
+    | kw_interconnect_model_set_interconnect_model
+    | kw_interconnect_model_set_port_map
+    | kw_interconnect_model_set_manchester_encoder
+    | kw_interconnect_model_set_pin_mapping
+    | kw_model_selector_model_list
+}
+
 // ============================ keyword headers ============================
 // -------- file header keyword --------
 kw_file_header_ibis_ver       = { "[" ~ "IBIS ver" ~ "]" }
@@ -61,13 +105,6 @@ kw_file_header_source         = { "[" ~ "Source" ~ "]" }
 kw_file_header_notes          = { "[" ~ "Notes" ~ "]" }
 kw_file_header_disclaimer     = { "[" ~ "Disclaimer" ~ "]" }
 kw_file_header_copyright      = { "[" ~ "Copyright" ~ "]" }
-
-// -------- first-level container group (9 types per IBIS 7.0 spec) --------
-first_level_keyword = {
-    kw_component | kw_model | kw_submodel | kw_external_circuit
-    | kw_test_data | kw_test_load | kw_define_package_model
-    | kw_interconnect_model_set | kw_model_selector
-}
 
 // -------- component keyword --------
 kw_component                       = { "[" ~ "Component" ~ "]" }
@@ -139,45 +176,18 @@ kw_interconnect_model_set_pin_mapping    = { "[" ~ "Pin Mapping" ~ "]" }
 kw_model_selector                 = { "[" ~ "Model Selector" ~ "]" }
 kw_model_selector_model_list      = { "[" ~ "Model List" ~ "]" }
 
-// -------- second-level container group --------
-second_level_keyword = {
-    kw_file_header_ibis_ver | kw_file_header_comment_char
-    | kw_file_header_file_name | kw_file_header_file_rev
-    | kw_file_header_date | kw_file_header_source
-    | kw_file_header_notes | kw_file_header_disclaimer
-    | kw_file_header_copyright
-    | kw_component_manufacturer | kw_component_package | kw_component_pin
-    | kw_component_pin_mapping | kw_component_package_model
-    | kw_component_series_pin_mapping | kw_component_differential_pin_mapping
-    | kw_model_model_spec | kw_model_temperature_range | kw_model_voltage_range
-    | kw_model_pulldown | kw_model_pullup | kw_model_gnd_clamp
-    | kw_model_power_clamp | kw_model_gnd_table | kw_model_power_table
-    | kw_model_ramp | kw_model_rising_waveform | kw_model_falling_waveform
-    | kw_model_series_current | kw_model_series_mosfet
-    | kw_model_threshold_sensitivity | kw_model_driver_schedule
-    | kw_model_reference_supply
-    | kw_submodel_pulldown | kw_submodel_pullup | kw_submodel_gnd_clamp
-    | kw_submodel_power_clamp | kw_submodel_ramp
-    | kw_external_circuit_circuit_model | kw_external_circuit_port_map
-    | kw_test_load_reference_supply | kw_test_load_pulldown
-    | kw_test_load_pullup | kw_test_load_gnd_clamp | kw_test_load_power_clamp
-    | kw_define_package_model_package_model | kw_define_package_model_pin_mapping
-    | kw_interconnect_model_set_interconnect_model
-    | kw_interconnect_model_set_port_map
-    | kw_interconnect_model_set_manchester_encoder
-    | kw_interconnect_model_set_pin_mapping
-    | kw_model_selector_model_list
-}
-
 // End marker
 kw_end                 = { "[" ~ "End" ~ "]" }
 
-// Generic keyword fallback (for unrecognized keywords)
-keyword                = @{ "[" ~ (ASCII_ALPHA | "_" | " ")+ ~ "]" }
 
-// ============================ content lines ============================
+// ========================================
+// =            content lines             =
+// ========================================
 content_line = { (si_number | ident | "/" | "=")+ }
 
+// ========================================
+// =            comment lines             =
+// ========================================
 comment     = _{ "|" ~ text_line }
 
 
