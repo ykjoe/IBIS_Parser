@@ -1,59 +1,135 @@
-//! 词法分析 — pest 规则导出与关键词/内容 token 提取。
+//! Lexical analysis — the lexical stage of the frontend pipeline.
 //!
-//! 职责：
-//! 1. 通过 [`IbisParser`]（`#[derive(pest_derive::Parser)]`）将 IBIS 文本完整解析为 pest pairs；
-//! 2. 提供关键词名提取（[`extract_keyword_name`]）与内容行提取（[`extract_line_content`]）辅助函数。
+//! This stage is responsible for the two lowest-level reading operations on
+//! IBIS text:
+//!
+//! - Parse IBIS text into pest pairs via [`IbisParser`]
+//!   (`#[derive(pest_derive::Parser)]`), which binds the pest grammar
+//!   [`ibis.pest`](frontend/ibis.pest) to Rust.
+//! - Expose its reading capabilities as functional traits
+//!   ([`KeywordNameParser`], [`ContentParser`]) so that every other stage can
+//!   read the same primitives without re-implementing them.
+//!
+//! The stage's functional capabilities are:
+//!
+//! - [`KeywordNameParser`] — read a section keyword out of a `[Keyword]` header
+//!   token. Downstream stages (syntax grouping, recovery) must know which
+//!   keyword a block belongs to, so this primitive lives at the lexical level.
+//! - [`ContentParser`] — read the normalized text of a content line. Downstream
+//!   stages accumulate content lines into blocks, so the trimmed form is fixed
+//!   here at the lexical level.
+//!
+//! The stage carrier [`LexicalAnalysis`] implements these capabilities. The
+//! interface functions [`extract_keyword_name`] and [`extract_line_content`]
+//! organize the capabilities for pest-pair consumers; the recovery path
+//! consumes the traits directly on raw lines.
 
-// =============================================================================
-// Parser type — pest 规则导出
-// =============================================================================
+pub use grammar::{IbisParser, Rule};
+pub use extraction::{extract_keyword_name, extract_line_content};
 
-#[derive(pest_derive::Parser)]
-#[grammar = "frontend/ibis.pest"]
-pub struct IbisParser;
-
-// =============================================================================
-// Keyword name extraction
-// =============================================================================
-
-/// Extract the keyword name from a keyword-header pair.
-///
-/// Works for both specific `kw_*` rules and the generic [`keyword`](Rule::keyword) rule.
-/// The pair's string representation is `[KeywordName]`; brackets are stripped.
-pub fn extract_keyword_name(pair: &pest::iterators::Pair<Rule>) -> String {
-    let pair_text = pair.as_str();
-    let start_position = pair_text.find('[').map(|pos| pos + 1).unwrap_or(0);
-    let end_position = pair_text.find(']').unwrap_or(pair_text.len());
-    pair_text[start_position..end_position].trim().to_string()
+/// Pest grammar binding — exposes the generated [`Rule`] enum and the parser
+/// entry point.
+mod grammar {
+    #[derive(pest_derive::Parser)]
+    #[grammar = "frontend/ibis.pest"]
+    pub struct IbisParser;
 }
 
-// =============================================================================
-// Content extraction helpers
-// =============================================================================
-
-/// Extract all inner tokens from a content_line pair as a single string.
+/// The lexical stage carrier.
 ///
-/// 测试辅助函数：用于验证 `content_line` 的 token 提取。
-/// 生产代码为保留原始空格，直接使用 `pair.as_str().trim()`，不调用本函数。
-#[cfg(test)]
-fn extract_line_content(pair: &pest::iterators::Pair<Rule>) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    for inner_pair in pair.clone().into_inner() {
-        let token_str = inner_pair.as_str().trim().to_string();
-        if !token_str.is_empty() {
-            parts.push(token_str);
+/// Implements the lexical functional capabilities: [`KeywordNameParser`] and
+/// [`ContentParser`].
+pub(crate) struct LexicalAnalysis;
+
+/// Keyword-name reading capability of the lexical stage.
+///
+/// Why it exists: every keyword block in an IBIS file is introduced by a
+/// `[Keyword]` header token. To know what a block is about, downstream stages
+/// need the keyword name that lives inside the brackets. Providing it as a
+/// trait at the lexical level lets the pest path and the recovery path share
+/// one implementation.
+pub(crate) trait KeywordNameParser {
+    /// Read the keyword name out of a `[Keyword]` header token.
+    ///
+    /// Returns the trimmed content inside the brackets with its original case
+    /// preserved (e.g. `"Component"`). Returns `None` when the token has no
+    /// closing `]` or the bracket content is empty.
+    fn keyword_name(&self, token: &str) -> Option<String>;
+}
+
+/// Content-line reading capability of the lexical stage.
+///
+/// Why it exists: the data of a keyword block is a sequence of content lines.
+/// Downstream stages collect these lines verbatim, so the exact trimmed form
+/// is fixed once here at the lexical level instead of being re-decided by
+/// every consumer.
+pub(crate) trait ContentParser {
+    /// Read the normalized text of a content line.
+    ///
+    /// Returns the line with leading and trailing whitespace removed.
+    fn parse_content_line(&self, line: &str) -> String;
+}
+
+impl KeywordNameParser for LexicalAnalysis {
+    fn keyword_name(&self, token: &str) -> Option<String> {
+        let trimmed = token.trim();
+        let closing = trimmed.find(']')?;
+        let inside = &trimmed[..=closing];
+        let content = &inside[1..inside.len() - 1];
+        if content.is_empty() {
+            None
+        } else {
+            Some(content.trim().to_string())
         }
     }
-    parts.join(" ")
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
+impl ContentParser for LexicalAnalysis {
+    fn parse_content_line(&self, line: &str) -> String {
+        line.trim().to_string()
+    }
+}
+
+/// Token extraction — organizes the lexical capabilities for pest pairs.
+///
+/// These interface functions adapt the lexical traits to the pest-pair world:
+/// a pair carries both a rule and its matched text, and the functions forward
+/// the matched text to the corresponding capability.
+mod extraction {
+    use super::grammar::Rule;
+    use super::{ContentParser, KeywordNameParser, LexicalAnalysis};
+
+    /// Interface function: read the keyword name from a keyword-header pair.
+    ///
+    /// Works for both specific `kw_*` rules and the generic
+    /// [`keyword`](Rule::keyword) rule. The pair's matched text is
+    /// `[KeywordName]`; the brackets are stripped through [`KeywordNameParser`].
+    ///
+    /// # Returns
+    ///
+    /// The keyword name inside the brackets (e.g. `"Component"`), or an empty
+    /// string when no keyword name can be read.
+    pub fn extract_keyword_name(pair: &pest::iterators::Pair<Rule>) -> String {
+        LexicalAnalysis.keyword_name(pair.as_str()).unwrap_or_default()
+    }
+
+    /// Interface function: read the normalized text from a `content_line` pair.
+    ///
+    /// Forwards the pair's matched text through [`ContentParser`] so syntax
+    /// grouping collects content lines through a single entry point.
+    ///
+    /// # Returns
+    ///
+    /// The content line with leading and trailing whitespace removed.
+    pub fn extract_line_content(pair: &pest::iterators::Pair<Rule>) -> String {
+        LexicalAnalysis.parse_content_line(pair.as_str())
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use pest::Parser;
+
     use super::*;
 
     #[test]
@@ -61,7 +137,7 @@ mod tests {
         let line = "R_pkg 250.0m 225.0m 275.0m";
         let pairs = IbisParser::parse(Rule::content_line, line).unwrap();
         for pair in pairs {
-            let extracted = extract_line_content(&pair);
+            let extracted = extraction::extract_line_content(&pair);
             assert_eq!(extracted, "R_pkg 250.0m 225.0m 275.0m");
         }
     }
@@ -71,7 +147,7 @@ mod tests {
         let line = "1 RAS0# Buffer1 200.0m 5.0nH 2.0pF";
         let pairs = IbisParser::parse(Rule::content_line, line).unwrap();
         for pair in pairs {
-            let extracted = extract_line_content(&pair);
+            let extracted = extraction::extract_line_content(&pair);
             assert!(!extracted.is_empty());
             assert!(extracted.contains("1"));
         }
@@ -94,11 +170,31 @@ mod tests {
     }
 
     #[test]
+    fn test_keyword_name_parser_capability() {
+        let lexical = LexicalAnalysis;
+        assert_eq!(lexical.keyword_name("[Component]"), Some("Component".into()));
+        assert_eq!(lexical.keyword_name("[Model]"), Some("Model".into()));
+        assert_eq!(lexical.keyword_name("[End]"), Some("End".into()));
+        assert_eq!(lexical.keyword_name("plain content"), None);
+        assert_eq!(lexical.keyword_name("[]"), None);
+    }
+
+    #[test]
+    fn test_content_parser_capability() {
+        let lexical = LexicalAnalysis;
+        assert_eq!(lexical.parse_content_line("  R_pkg 0.1  "), "R_pkg 0.1");
+    }
+
+    #[test]
     fn debug_pest_ibis_file() {
         let content = "[IBIS ver] 2.1\n[Component] MyChip\n";
         let pairs = IbisParser::parse(Rule::ibis_file, content).unwrap();
         for pair in pairs.flatten() {
-            println!("DEBUG pair: rule={:?} text='{}'", pair.as_rule(), pair.as_str().escape_default());
+            println!(
+                "DEBUG pair: rule={:?} text='{}'",
+                pair.as_rule(),
+                pair.as_str().escape_default()
+            );
         }
     }
 }

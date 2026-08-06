@@ -1,11 +1,16 @@
-//! 后端模块 — 预留语义处理 / 数据转换接口。
+//! Backend module — reserved semantic processing / data-conversion interface.
 //!
-//! 该模块暂未实现。后续将消费前端产出的
-//! [`SectionNode`](crate::frontend::SectionNode) 树，进行语义分析、
-//! 数值转换、单位换算、`[[array-of-tables]]` 判定等，再交由
-//! [`emitter`](crate::emitter) 输出。
+//! Not yet implemented. It will later consume the
+//! [`SectionNode`](crate::frontend::SectionNode) tree produced by the frontend
+//! to perform semantic analysis, numeric conversion, unit scaling, and
+//! `[[array-of-tables]]` detection before handing off to
+//! [`emitter`](crate::emitter) for output.
 //!
-//! # 设计约束
+//! # Design constraints
 //!
-//! - 前端不做语义分析，后端不做文本解析
-//! - 各阶段通过公共 API 通信，禁止跨层级引用内部类型
+//! - The frontend does no semantic analysis; the backend does no text parsing.
+//! - Stages communicate through public APIs; cross-layer references to internal
+//!   types are forbidden.
+//!
+//! This is currently a placeholder; semantic processing and data conversion
+//! are planned for a later milestone.

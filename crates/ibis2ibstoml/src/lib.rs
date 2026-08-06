@@ -1,14 +1,24 @@
 //! ibis2ibstoml — First-pass IBIS-to-TOML conversion pipeline.
 //!
-//! 该 crate 将原始 IBIS 文本转换为 TOML 表示，采用三段式 Pipeline：
+//! This crate converts raw IBIS text into its TOML representation using a
+//! three-stage pipeline:
 //!
-//! 1. **frontend** — 唯一公开接口 [`frontend::parse`]：IBIS 文本 → 抽象语法树
-//!    （内部为词法 [`frontend::tokenizer`] → 语法 [`frontend::syntax_analysis`]
-//!    → AST [`frontend::ast_builder`]，失败时由 [`frontend::recovery`] 容错回退）。
-//! 2. **backend** — 预留：后端语义处理 / 数据转换接口。
-//! 3. **emitter** — 将 [`SectionNode`](frontend::SectionNode) 树序列化为 TOML。
+//! 1. **frontend** — The only public interface [`frontend::parse`]: IBIS text
+//!    → abstract syntax tree. Internally it runs lexical analysis
+//!    ([`frontend::lexical_analysis`]) → syntax analysis
+//!    ([`frontend::syntax_analysis`]) → AST building
+//!    ([`frontend::ast_builder`]), with a fault-tolerant fallback
+//!    ([`frontend::recovery`]) when the pest parse fails.
+//! 2. **backend** — Reserved: backend semantic processing / data-conversion
+//!    interface.
+//! 3. **emitter** — Serializes the
+//!    [`SectionNode`](frontend::ast_builder::SectionNode) tree into TOML.
 //!
-//! 所有值均以原始字符串保留，不做数值转换或单位换算。
+//! All values are preserved as raw strings; no numeric conversion or unit
+//! scaling is performed.
+//!
+//! The crate entry point exposes [`parse_to_toml`] and [`ibs2ibstoml`] as the
+//! top-level public API.
 //!
 //! # Examples
 //!
@@ -21,7 +31,6 @@
 //! ```
 
 pub mod backend;
-pub mod compat;
 pub mod core;
 pub mod emitter;
 pub mod frontend;
@@ -29,16 +38,18 @@ pub mod frontend;
 use std::fs;
 use std::path::Path;
 
-// =============================================================================
-// Public API — parse IBIS content and produce TOML
-// =============================================================================
-
 /// Parse IBIS content and produce TOML output in a single pass.
+///
+/// Orchestrates the complete pipeline: the frontend parses the IBIS text into
+/// a [`SectionNode`](frontend::ast_builder::SectionNode) tree, then the emitter
+/// recursively serializes that tree into a TOML string.
 ///
 /// # Pipeline
 ///
-/// 1. **Frontend** — [`frontend::parse`] 将 IBIS 文本解析为 [`SectionNode`](frontend::SectionNode) 树。
-/// 2. **Emit** — [`emitter::toml::serialize_tree_to_string`] 递归序列化为 TOML。
+/// 1. **Frontend** — [`frontend::parse`] parses the IBIS text into a
+///    [`SectionNode`](frontend::ast_builder::SectionNode) tree.
+/// 2. **Emit** — [`emitter::toml::serialize_tree_to_string`] recursively
+///    serializes the tree to TOML.
 ///
 /// # Parameters
 ///
@@ -51,7 +62,12 @@ use std::path::Path;
 ///
 /// # Errors
 ///
-/// If pest parsing fails and the fallback also fails, an error message is returned.
+/// If pest parsing fails and the fallback also fails, an error message is
+/// returned.
+///
+/// # Panics
+///
+/// Does not panic under normal operation.
 ///
 /// # Examples
 ///
@@ -63,31 +79,34 @@ use std::path::Path;
 /// assert!(toml_output.contains("ibis_ver"));
 /// ```
 pub fn parse_to_toml(content: &str) -> Result<String, String> {
-    // ── Phase 1: frontend 解析 → AST 树 ──
+    // Phase 1: frontend parsing → AST tree.
     let tree = frontend::parse(content)?;
 
-    // ── Phase 2: emitter 序列化 → TOML ──
+    // Phase 2: emitter serialization → TOML.
     Ok(emitter::toml::serialize_tree_to_string(&tree))
 }
 
 /// Read an IBIS file and produce a `.ibs.toml` representation.
 ///
-/// The function uses a single-pass pipeline:
-/// 1. **Frontend parsing** ([`parse_to_toml`]) — pest-based full parsing
-///    (lexical + syntax) and direct TOML serialization.
+/// Reads the file from disk and delegates conversion to [`parse_to_toml`],
+/// which runs the pest-based full parsing (lexical + syntax) followed by
+/// direct TOML serialization.
 ///
 /// # Parameters
 ///
-/// * `path` — Path to an `.ibs` file. Accepts any type implementing [`AsRef<Path>`].
+/// * `path` — Path to an `.ibs` file. Accepts any type implementing
+///   [`AsRef<Path>`].
 ///
 /// # Returns
 ///
 /// * `Ok(String)` — The TOML representation of the IBIS content.
-/// * `Err(String)` — A human-readable error message if the file cannot be read or conversion fails.
+/// * `Err(String)` — A human-readable error message if the file cannot be read
+///   or conversion fails.
 ///
 /// # Errors
 ///
-/// Returns `Err` if the file cannot be read from disk, or if the content cannot be parsed.
+/// Returns `Err` if the file cannot be read from disk, or if the content
+/// cannot be parsed.
 ///
 /// # Panics
 ///
@@ -98,10 +117,6 @@ pub fn ibs2ibstoml<P: AsRef<Path>>(path: P) -> Result<String, String> {
 
     parse_to_toml(&content)
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

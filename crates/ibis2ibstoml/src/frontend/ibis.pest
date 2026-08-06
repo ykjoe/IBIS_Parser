@@ -50,9 +50,6 @@ si_number   = @{
 // Block B: Syntax rules — keyword-specific grammar and file topology
 // =============================================================================
 
-// ========================================
-// =               keyword                =
-// ========================================
 // ======================== keyword container groups ========================
 // -------- Generic keyword fallback (for unrecognized keywords) --------
 keyword                = @{ "[" ~ (ASCII_ALPHA | "_" | " ")+ ~ "]" }
@@ -93,6 +90,7 @@ second_level_keyword = {
     | kw_interconnect_model_set_pin_mapping
     | kw_model_selector_model_list
 }
+
 
 // ============================ keyword headers ============================
 // -------- file header keyword --------
@@ -180,14 +178,10 @@ kw_model_selector_model_list      = { "[" ~ "Model List" ~ "]" }
 kw_end                 = { "[" ~ "End" ~ "]" }
 
 
-// ========================================
-// =            content lines             =
-// ========================================
+// =============================== content lines ===============================
 content_line = { (si_number | ident | "/" | "=")+ }
 
-// ========================================
-// =            comment lines             =
-// ========================================
+// =============================== comment lines ===============================
 comment     = _{ "|" ~ text_line }
 
 

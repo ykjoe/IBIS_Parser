@@ -1,17 +1,31 @@
-//! 前端模块 — 唯一公开接口：输入 IBIS 文本，输出抽象语法树。
+//! Frontend module — the only public interface: IBIS text in, AST tree out.
 //!
-//! 内部按 Pipeline 阶段组织（词法 → 语法 → AST → 容错），各阶段均为私有子模块：
+//! Internally organized as a pipeline of stages (lexical → syntax → AST →
+//! recovery), all of which are private submodules:
 //!
-//! - [`lexical_analysis`] — 词法分析：pest 规则导出 + 关键词/内容 token 提取
-//! - [`syntax_analysis`] — 语法分析：pairs 展平为扁平 `ParsedBlock` 列表
-//! - [`ast_builder`] — 抽象语法树：AST 数据结构 + `build_section_tree`（`ParsedBlock` → `SectionNode` 树）
-//! - [`recovery`] — 容错回退解析（pest 失败时逐行解析）
+//! - [`lexical_analysis`] — pest rule export + keyword/content token extraction
+//! - [`syntax_analysis`] — flatten pairs into a flat `ParsedBlock` list
+//! - [`ast_builder`] — AST data structures + `build_section_tree` (`ParsedBlock` → `SectionNode` tree)
+//! - [`recovery`] — Fault-tolerant fallback parsing (line-by-line when pest fails)
 //!
-//! # 设计约束
+//! Each stage owns its functional capabilities as traits and a carrier type
+//! that implements them:
 //!
-//! - 仅通过 [`parse`] 对外提供能力，内部流程不公开
-//! - 所有值以原始字符串保留，不进行数值转换或单位换算
-//! - 不区分 `[[array-of-tables]]` 与 `[...]`，该决策属于后端职责
+//! | Stage | Functional capability trait | Carrier |
+//! |-------|-----------------------------|---------|
+//! | lexical | [`KeywordNameParser`], [`ContentParser`] | `LexicalAnalysis` |
+//! | syntax | [`LineClassParser`] | `SyntaxAnalysis` |
+//! | AST | [`HeaderFieldParser`] | `AstBuilder` |
+//!
+//! These traits are internal and consumed by the pipeline; only the module
+//! doc-level [`parse`] is public. Other layers (e.g. the backend) define their
+//! own capabilities as needed.
+//!
+//! # Design constraints
+//!
+//! - Exposes capabilities only through [`parse`]; internal flow is not public
+//! - All values are preserved as raw strings; no numeric conversion or unit scaling
+//! - Does not distinguish `[[array-of-tables]]` from `[...]`; that decision belongs to the backend
 
 mod ast_builder;
 mod recovery;
@@ -23,13 +37,24 @@ use pest::Parser;
 pub use ast_builder::{NodeKind, ParsedBlock, SectionNode};
 pub use lexical_analysis::Rule;
 
-/// 前端唯一公开接口：输入 IBIS 文本 → 输出抽象语法树。
+/// Parse IBIS text into an abstract syntax tree (the frontend's only public
+/// interface).
 ///
 /// # Pipeline
 ///
-/// 1. **词法** — [`lexical_analysis::IbisParser::parse`] pest 完整解析（失败 → [`recovery`] 容错回退）
-/// 2. **语法** — [`syntax_analysis::group_pairs_to_blocks`] pairs → 扁平 [`ParsedBlock`]
-/// 3. **AST** — [`ast_builder::build_section_tree`] `ParsedBlock` → 多级 [`SectionNode`] 树
+/// 1. **Lexical** — [`lexical_analysis::IbisParser::parse`] full pest parsing
+///    (falls back to [`recovery`] on failure).
+/// 2. **Syntax** — [`syntax_analysis::group_pairs_to_blocks`]: pairs → flat
+///    [`ParsedBlock`] list.
+/// 3. **AST** — [`ast_builder::build_section_tree`]: flat blocks → multi-level
+///    [`SectionNode`] tree.
+///
+/// # Timing gate
+///
+/// The primary path uses the pest grammar for all three stages. When the full
+/// pest parse fails, [`recovery`] takes over, consuming the lexical
+/// [`KeywordNameParser`] and syntax [`LineClassParser`] capabilities to parse
+/// line by line, then reuses the same AST builder.
 ///
 /// # Parameters
 ///
@@ -37,26 +62,48 @@ pub use lexical_analysis::Rule;
 ///
 /// # Returns
 ///
-/// * `Ok(Vec<SectionNode>)` — 根级抽象语法树（含 `[File_Header]` 虚拟节点）。
+/// * `Ok(Vec<SectionNode>)` — The root-level AST, including the `[File_Header]`
+///   virtual node.
 /// * `Err(String)` — A human-readable error message if parsing fails.
+///
+/// # Errors
+///
+/// The current implementation never returns `Err`: when the full pest parse
+/// fails, [`recovery`] takes over and always yields a block list that can be
+/// turned into a tree.
+///
+/// # Panics
+///
+/// Does not panic under normal operation.
 pub fn parse(content: &str) -> Result<Vec<SectionNode>, String> {
-    // ── Phase 1: 词法（pest 完整解析；失败走容错回退）──
-    let parsed_pairs = match lexical_analysis::IbisParser::parse(Rule::ibis_file, content) {
-        Ok(pairs) => pairs,
-        Err(_parse_error) => {
-            let blocks = recovery::recover_blocks(content);
-            return Ok(build_tree_from_blocks(&blocks));
-        }
+    // Stage carriers implementing the functional capabilities used by the
+    // fault-tolerant recovery path.
+    let lexical = lexical_analysis::LexicalAnalysis;
+    let syntax = syntax_analysis::SyntaxAnalysis;
+
+    // Timing gate: try the primary pest path first.
+    let blocks = match lexical_analysis::IbisParser::parse(Rule::ibis_file, content) {
+        Ok(pairs) => syntax_analysis::group_pairs_to_blocks(pairs),
+        // Fall back to the line-by-line path when pest fails.
+        Err(_parse_error) => recovery::recover_blocks(content, &lexical, &syntax),
     };
 
-    // ── Phase 2: 语法（pairs → 扁平 block）──
-    let blocks = syntax_analysis::group_pairs_to_blocks(parsed_pairs);
-
-    // ── Phase 3: AST（block → 多级节段树）──
+    // AST building (blocks → multi-level section tree).
     Ok(build_tree_from_blocks(&blocks))
 }
 
-/// 将扁平 block 列表构建为根级节段树（处理多个根级分组）。
+/// Build a root-level section tree from a flat block list.
+///
+/// Handles multiple root-level groups by repeatedly invoking
+/// [`ast_builder::build_section_tree`].
+///
+/// # Parameters
+///
+/// * `blocks` — The flat `ParsedBlock` list to build from.
+///
+/// # Returns
+///
+/// The root-level [`SectionNode`] tree.
 fn build_tree_from_blocks(blocks: &[ParsedBlock]) -> Vec<SectionNode> {
     let mut tree: Vec<SectionNode> = Vec::new();
     let mut block_index = 0;

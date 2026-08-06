@@ -1,20 +1,24 @@
-//! TOML 输出 — 从 [`SectionNode`] 树生成 TOML 字符串。
+//! TOML output — generate a TOML string from a [`SectionNode`] tree.
 //!
-//! 序列化规则：
-//! - 所有节段统一使用 `[Section]` 或 `[Parent.Child]` 格式；
-//! - `[[array-of-tables]]` 是后端处理器的职责，输出层不做区分；
-//! - 单行内容输出 `key = "value"`，多行内容输出为 TOML 数组。
+//! Serialization rules:
+//! - All sections use `[Section]` or `[Parent.Child]` format;
+//! - `[[array-of-tables]]` is the backend's responsibility; the output layer
+//!   does not distinguish it;
+//! - Single-line content emits `key = "value"`, multi-line content emits a TOML array.
 
 use std::fmt::Write as FmtWrite;
 
-use crate::frontend::NodeKind;
-use crate::frontend::SectionNode;
-
-// =============================================================================
-// TOML string helpers
-// =============================================================================
+use crate::frontend::{NodeKind, SectionNode};
 
 /// Escape and wrap a raw string value for TOML output.
+///
+/// # Parameters
+///
+/// * `raw_value` — The raw string to escape.
+///
+/// # Returns
+///
+/// The escaped value wrapped in double quotes.
 fn escape_toml_string(raw_value: &str) -> String {
     let escaped_value = raw_value
         .replace('\\', "\\\\")
@@ -23,19 +27,31 @@ fn escape_toml_string(raw_value: &str) -> String {
 }
 
 /// Convert a keyword name to a TOML-safe section name (spaces → underscores).
+///
+/// # Parameters
+///
+/// * `keyword` — The raw keyword name, e.g. `"Pin Mapping"`.
+///
+/// # Returns
+///
+/// The section name with spaces replaced by underscores, e.g. `"Pin_Mapping"`.
 fn toml_section_name(keyword: &str) -> String {
     keyword.replace(' ', "_")
 }
 
 /// Convert a section name to a TOML key name (lowercased last path segment).
+///
+/// # Parameters
+///
+/// * `section_name` — A dot-separated TOML section path.
+///
+/// # Returns
+///
+/// The lowercased last path segment used as the key.
 fn toml_key_name(section_name: &str) -> String {
     let last_segment = section_name.rsplit('.').next().unwrap_or(section_name);
     last_segment.to_lowercase()
 }
-
-// =============================================================================
-// Phase 4: Tree → TOML serialization
-// =============================================================================
 
 /// Recursively serialize a section tree to TOML.
 ///
@@ -44,6 +60,10 @@ fn toml_key_name(section_name: &str) -> String {
 /// * `nodes` — The section nodes to serialize.
 /// * `parent_path` — Dot-separated TOML path of the parent (e.g., `"Component"`).
 /// * `output_buffer` — The mutable TOML output string being built.
+///
+/// # Returns
+///
+/// Does not return a value; output is appended directly to `output_buffer`.
 pub fn serialize_tree(nodes: &[SectionNode], parent_path: &str, output_buffer: &mut String) {
     for node in nodes {
         let section_name = toml_section_name(&node.keyword);
@@ -55,7 +75,7 @@ pub fn serialize_tree(nodes: &[SectionNode], parent_path: &str, output_buffer: &
 
         match node.kind {
             NodeKind::Regular => {
-                // [Section] or [Parent.Child] — regular section
+                // [Section] or [Parent.Child] — regular section.
                 let _ = writeln!(output_buffer, "[{}]", full_path);
                 emit_content(output_buffer, &section_name, &node.content);
                 let _ = writeln!(output_buffer);
@@ -63,7 +83,7 @@ pub fn serialize_tree(nodes: &[SectionNode], parent_path: &str, output_buffer: &
             }
 
             NodeKind::FileHeader => {
-                // [File_Header] — emit section header then children
+                // [File_Header] — emit the section header, then its children.
                 let _ = writeln!(output_buffer, "[{}]", full_path);
                 let _ = writeln!(output_buffer);
                 if !node.children.is_empty() {
@@ -90,6 +110,12 @@ pub fn serialize_tree_to_string(tree: &[SectionNode]) -> String {
 }
 
 /// Emit content lines as TOML key-value pairs.
+///
+/// # Parameters
+///
+/// * `output_buffer` — The mutable TOML output string being built.
+/// * `section_name` — The section name used to derive the TOML key.
+/// * `content` — The content lines to emit.
 fn emit_content(output_buffer: &mut String, section_name: &str, content: &[String]) {
     let toml_key = toml_key_name(section_name);
 
@@ -123,15 +149,10 @@ fn emit_content(output_buffer: &mut String, section_name: &str, content: &[Strin
     }
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::NodeKind;
-    use crate::frontend::SectionNode;
+    use crate::frontend::{NodeKind, SectionNode};
 
     #[test]
     fn test_escape_toml_string_wraps_in_quotes() {

@@ -1,11 +1,11 @@
-//! 底层基础设施 — 本 crate 全局性、跨阶段公用的数据类型。
+//! Low-level infrastructure — cross-stage shared data types for this crate.
 //!
-//! # 设计约束
+//! # Design constraints
 //!
-//! `core` 只承载"底层基础设施"（如 pest 生成的规则枚举 [`Rule`]），
-//! **不承载**任何具体业务子阶段的数据：
+//! `core` hosts only "low-level infrastructure" (e.g., the pest-generated rule
+//! enum [`Rule`]); it does **not** carry any business-stage data:
 //!
-//! - 抽象语法树数据结构（`NodeKind` / `SectionNode` / `ParsedBlock`）→ [`frontend::ast_builder`]
-//! - 词法 / 语法 / 容错逻辑 → [`frontend::tokenizer`] / [`frontend::syntax_analysis`] / [`frontend::recovery`]
+//! - AST data structures (`NodeKind` / `SectionNode` / `ParsedBlock`) → [`frontend::ast_builder`]
+//! - Lexical / syntax / recovery logic → [`frontend::lexical_analysis`] / [`frontend::syntax_analysis`] / [`frontend::recovery`]
 
 pub use crate::frontend::Rule;

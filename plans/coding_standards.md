@@ -278,14 +278,10 @@ let keyword_name = IbisParser::parse(Rule::keyword_header, keyword_header_part)?
 // ✅ 正确：强类型枚举
 #[derive(Debug, Clone, PartialEq)]
 enum ParserState {
-    /// Currently parsing the file header section.
-    InHeader,
-    /// Currently parsing a Component section, carrying the component name.
-    InComponent(String),
-    /// Currently parsing a Model section, carrying the model name.
-    InModel(String),
-    /// End-of-file marker encountered.
-    InEnd,
+    InHeader,               // Currently parsing the file header section.
+    InComponent(String),    // Currently parsing a Component section, carrying the component name.
+    InModel(String),        // Currently parsing a Model section, carrying the model name.
+    InEnd,                  // End-of-file marker encountered.
 }
 
 // ❌ 错误：魔术字符串状态机
@@ -306,14 +302,10 @@ let state = "in_header";
 // ✅ 正确
 #[derive(Debug, Clone, PartialEq)]
 enum Keyword {
-    /// Array-parent container: `[Component]`
-    Component,
-    /// Array-parent container: `[Model]`
-    Model,
-    /// Singleton table: `[End]`
-    End,
-    /// Unrecognized keyword, preserved as-is.
-    Other(String),
+    Component,          // Array-parent container: `[Component]`
+    Model,              // Array-parent container: `[Model]`
+    End,                // Singleton table: `[End]`
+    Other(String),      // Unrecognized keyword, preserved as-is.
 }
 
 // ❌ 错误：运行时字符串比对

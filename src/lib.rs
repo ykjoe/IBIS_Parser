@@ -11,7 +11,7 @@
 //!   `frontend` module uses a PEST grammar (with both lexical primitives and
 //!   specific keyword rules) for full parsing and directly serialises to TOML.
 //!   All values remain as raw strings; no numerical conversion or unit scaling
-//!   is performed.
+//!   is performed. Re-exported below as `ibis2ibstoml` for compatibility.
 //! - [`ibis_parser`] — (Planned) Second-pass semantic parsing layer. Converts
 //!   the TOML string into strongly-typed AST structures.
 //!
@@ -27,3 +27,5 @@
 //! ```
 
 pub mod ibis_parser;
+
+pub use ibis2ibstoml;
