@@ -6,24 +6,16 @@
 //! list — i.e., "building the abstract syntax tree"
 //! ([`build_section_tree`]).
 //!
-//! The stage's functional capability is:
-//!
-//! - [`HeaderFieldParser`] — classify whether a keyword names a file-header
-//!   field. The tree builder needs this to decide which consecutive blocks
-//!   belong to the virtual `[File_Header]` container, so the rule lives here
-//!   at the AST stage.
+//! Tree building classifies which consecutive blocks belong to the virtual
+//! `[File_Header]` container via [`header_field::is_header_field_keyword`], so
+//! the rule lives here at the AST stage.
 
 pub use ast_types::{NodeKind, ParsedBlock, SectionNode};
 pub use tree_builder::build_section_tree;
 
-/// The AST stage carrier.
-///
-/// Implements the AST functional capability: [`HeaderFieldParser`].
-pub(crate) struct AstBuilder;
-
 /// AST data structures — node kinds and the flat block intermediate form.
-mod ast_types {
-    use crate::core::Rule;
+pub(crate) mod ast_types {
+    use crate::frontend::Rule;
 
     /// Role of a section node in the TOML output.
     ///
@@ -53,65 +45,35 @@ mod ast_types {
     }
 }
 
-/// File-header field classification capability of the AST stage.
-///
-/// Why it exists: IBIS starts every file with a run of file-header fields
-/// (IBIS ver, File name, …). The tree builder groups those consecutive blocks
-/// under the virtual `[File_Header]` container, so it must be able to tell a
-/// header field from an ordinary section. Keyword matching is
-/// case-insensitive, per the IBIS convention that bracket content is
-/// case-insensitive.
-pub(crate) trait HeaderFieldParser {
-    /// Check whether a keyword names a file header field (case-insensitive).
-    ///
-    /// # Parameters
-    ///
-    /// * `keyword` — A keyword name, e.g. `"IBIS ver"`.
-    ///
-    /// # Returns
-    ///
-    /// * `true` — When the keyword is a known file header field.
-    /// * `false` — Otherwise.
-    fn is_header_field_keyword(&self, keyword: &str) -> bool;
-}
+/// File-header field classification — tell header fields from ordinary sections.
+mod header_field {
+    use crate::frontend::ast_builder::ast_types::ParsedBlock;
 
-impl HeaderFieldParser for AstBuilder {
-    fn is_header_field_keyword(&self, keyword: &str) -> bool {
+    /// Whether a keyword names a file header field (case-insensitive).
+    ///
+    /// Takes a keyword; returns `true` for known header fields such as
+    /// "IBIS ver" / "File name".
+    pub(super) fn is_header_field_keyword(keyword: &str) -> bool {
         matches!(
             keyword.to_ascii_lowercase().as_str(),
             "ibis ver" | "comment char" | "file name" | "file rev"
                 | "date" | "source" | "notes" | "disclaimer" | "copyright"
         )
     }
-}
 
-/// File header field detection — organize the [`HeaderFieldParser`] capability
-/// for parsed blocks.
-mod header_detection {
-    use super::ast_types::ParsedBlock;
-    use super::{AstBuilder, HeaderFieldParser};
-
-    /// Check whether a parsed block is a file header field.
-    ///
-    /// # Parameters
-    ///
-    /// * `block` — The parsed block to inspect.
-    ///
-    /// # Returns
-    ///
-    /// * `true` — When the block's keyword is a known file header field.
-    /// * `false` — Otherwise.
-    pub(crate) fn is_file_header_field(block: &ParsedBlock) -> bool {
-        AstBuilder.is_header_field_keyword(&block.keyword)
+    /// Whether a parsed block is a file header field (wraps
+    /// `is_header_field_keyword` on the block's keyword).
+    pub(super) fn is_file_header_field(block: &ParsedBlock) -> bool {
+        is_header_field_keyword(&block.keyword)
     }
 }
 
 /// Tree building — recursively construct the section tree from flat blocks.
 mod tree_builder {
-    use crate::core::Rule;
+    use crate::frontend::Rule;
     use crate::frontend::ast_builder::ast_types::{NodeKind, ParsedBlock, SectionNode};
 
-    use super::header_detection::is_file_header_field;
+    use super::header_field::is_file_header_field;
 
     /// Build a hierarchical section tree from flat parsed blocks.
     ///
@@ -212,7 +174,7 @@ mod tree_builder {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::Rule;
+    use crate::frontend::Rule;
 
     use super::*;
 
@@ -249,23 +211,22 @@ mod tests {
             rule: Rule::second_level_keyword,
             content: vec![],
         };
-        assert!(header_detection::is_file_header_field(&header_block));
+        assert!(header_field::is_file_header_field(&header_block));
 
         let non_header_block = ParsedBlock {
             keyword: "Pin".into(),
             rule: Rule::second_level_keyword,
             content: vec![],
         };
-        assert!(!header_detection::is_file_header_field(&non_header_block));
+        assert!(!header_field::is_file_header_field(&non_header_block));
     }
 
     #[test]
-    fn test_header_field_parser_case_insensitive() {
-        let ast = AstBuilder;
+    fn test_is_header_field_keyword_case_insensitive() {
         // Case-insensitive keyword matching.
-        assert!(ast.is_header_field_keyword("IBIS ver"));
-        assert!(ast.is_header_field_keyword("ibis ver"));
-        assert!(ast.is_header_field_keyword("FILE NAME"));
-        assert!(!ast.is_header_field_keyword("Component"));
+        assert!(header_field::is_header_field_keyword("IBIS ver"));
+        assert!(header_field::is_header_field_keyword("ibis ver"));
+        assert!(header_field::is_header_field_keyword("FILE NAME"));
+        assert!(!header_field::is_header_field_keyword("Component"));
     }
 }

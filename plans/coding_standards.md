@@ -474,6 +474,41 @@ fn collect_child_sections(...) -> Vec<Section>  // 最后一个元素是 next_in
 pub fn ibs2toml(content: &str) -> Result<String, String>
 ```
 
+#### 7.1.1 私有函数（非 `pub`）注释精简规则
+
+私有函数（`pub(crate)` / `pub(super)` / 无修饰 `fn`）**不要求**完整的 rustdoc 结构，注释必须精简：
+
+- 注释不超过 5 行，大部分控制在 3 行左右
+- 只强调输入与输出：说明接受什么、返回什么
+- 不写 `# Parameters` / `# Returns` / `# Examples` 等扩展区块
+
+```rust
+// ✅ 正确：私有函数精简注释
+/// Whether a line is a continuation line.
+///
+/// Takes a raw `line`; returns `true` when the trimmed line starts with `|`.
+pub(crate) fn is_continuation_line(line: &str) -> bool {
+    line.trim().starts_with('|')
+}
+
+// ❌ 错误：私有函数套用完整 rustdoc 结构
+/// Check whether a line is a continuation line.
+///
+/// A continuation line starts with the `|` marker after leading whitespace
+/// is trimmed.
+///
+/// # Parameters
+///
+/// * `line` — A single raw line from an IBIS file.
+///
+/// # Returns
+///
+/// * `true` — When the trimmed line starts with `|`.
+pub(crate) fn is_continuation_line(line: &str) -> bool {
+    line.trim().starts_with('|')
+}
+```
+
 ### 7.2 文档章节顺序
 
 区块必须严格按以下顺序排列：

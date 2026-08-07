@@ -31,7 +31,6 @@
 //! ```
 
 pub mod backend;
-pub mod core;
 pub mod emitter;
 pub mod frontend;
 
