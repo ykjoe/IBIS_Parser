@@ -34,7 +34,6 @@ mod line_type {
     ///
     /// Takes a raw `line`; returns the trimmed text after `|`, or `None` when
     /// the line is not a continuation or the content is empty.
-    #[allow(dead_code)]
     pub(crate) fn parse_continuation_content(line: &str) -> Option<String> {
         let trimmed = line.trim();
         if trimmed.starts_with('|') {

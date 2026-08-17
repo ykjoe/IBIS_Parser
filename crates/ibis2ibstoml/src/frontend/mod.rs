@@ -81,21 +81,15 @@ pub fn parse(content: &str) -> Result<Vec<SectionNode>, String> {
     };
 
     // AST building (blocks → multi-level section tree).
-    Ok(build_tree_from_blocks(&blocks))
+    let ast_tree = build_tree_from_blocks(&blocks);
+    
+    Ok(ast_tree)
 }
 
-/// Build a root-level section tree from a flat block list.
+/// Build a root-level section tree [`SectionNode`] from a flat block list.
 ///
 /// Handles multiple root-level groups by repeatedly invoking
 /// [`ast_builder::build_section_tree`].
-///
-/// # Parameters
-///
-/// * `blocks` — The flat `ParsedBlock` list to build from.
-///
-/// # Returns
-///
-/// The root-level [`SectionNode`] tree.
 fn build_tree_from_blocks(blocks: &[ParsedBlock]) -> Vec<SectionNode> {
     let mut tree: Vec<SectionNode> = Vec::new();
     let mut block_index = 0;
