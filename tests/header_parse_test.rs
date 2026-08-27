@@ -20,9 +20,9 @@ use std::fs;
 use std::path::Path;
 
 use ibis2ibstoml::frontend::{parse, NodeKind, SectionNode};
-use ibis_parser::ibis_parser::ibis_structure::IBIS_FileHeader;
+use ibis_parser::ibis_parser::model::IBIS_File_Header;
 
-/// Build an [`IBIS_FileHeader`] from the `[File_Header]` virtual node of the
+/// Build an [`IBIS_File_Header`] from the `[File_Header]` virtual node of the
 /// frontend AST.
 ///
 /// Walks the root [`SectionNode`] list, finds the `File_Header` node, and maps
@@ -35,8 +35,8 @@ use ibis_parser::ibis_parser::ibis_structure::IBIS_FileHeader;
 /// # Returns
 ///
 /// The parsed header struct.
-fn header_from_tree(tree: &[SectionNode]) -> IBIS_FileHeader {
-    let mut header = IBIS_FileHeader::default();
+fn header_from_tree(tree: &[SectionNode]) -> IBIS_File_Header {
+    let mut header = IBIS_File_Header::default();
 
     let file_header = tree.iter().find(|node| node.keyword == "File_Header");
     let Some(file_header) = file_header else {
@@ -48,7 +48,7 @@ fn header_from_tree(tree: &[SectionNode]) -> IBIS_FileHeader {
         let value = child.content.join("\n");
         match child.keyword.as_str() {
             "IBIS ver" => header.ibis_ver = value,
-            "Comment Char" => header.comment_char = value.chars().next(),
+            "Comment Char" => header.comment_char = Some(value),
             "File name" => header.file_name = value,
             "File Rev" => header.file_rev = value,
             "Date" => header.date = Some(value),
@@ -72,13 +72,13 @@ fn header_from_tree(tree: &[SectionNode]) -> IBIS_FileHeader {
 /// # Returns
 ///
 /// A tuple of:
-/// * `(IBIS_FileHeader, Vec<String>)` — The parsed header struct and the raw
+/// * `(IBIS_File_Header, Vec<String>)` — The parsed header struct and the raw
 ///   header field keywords as they appear in the AST.
 ///
 /// # Panics
 ///
 /// Panics if the file cannot be read.
-fn parse_file_header<P: AsRef<Path>>(path: P) -> (IBIS_FileHeader, Vec<String>) {
+fn parse_file_header<P: AsRef<Path>>(path: P) -> (IBIS_File_Header, Vec<String>) {
     let content = fs::read_to_string(path).expect("Failed to read IBIS file");
     let tree = parse(&content).expect("Failed to parse IBIS file");
 

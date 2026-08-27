@@ -30,23 +30,6 @@ mod line_type {
         line.trim().starts_with('|')
     }
 
-    /// Extract content after the `|` continuation marker.
-    ///
-    /// Takes a raw `line`; returns the trimmed text after `|`, or `None` when
-    /// the line is not a continuation or the content is empty.
-    pub(crate) fn parse_continuation_content(line: &str) -> Option<String> {
-        let trimmed = line.trim();
-        if trimmed.starts_with('|') {
-            let content = trimmed[1..].trim().to_string();
-            if content.is_empty() {
-                None
-            } else {
-                Some(content)
-            }
-        } else {
-            None
-        }
-    }
 }
 
 /// Keyword-block grouping — fold input into a flat block list.
@@ -203,12 +186,6 @@ mod tests {
     fn test_line_classification() {
         assert!(line_type::is_continuation_line("| continued text"));
         assert!(!line_type::is_continuation_line("[IBIS ver] 2.1"));
-        assert_eq!(
-            line_type::parse_continuation_content("| continued text"),
-            Some("continued text".into())
-        );
-        assert_eq!(line_type::parse_continuation_content("[Component]"), None);
-        assert_eq!(line_type::parse_continuation_content("|"), None);
     }
 
     #[test]

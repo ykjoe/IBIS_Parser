@@ -1,8 +1,15 @@
-//! IBIS semantic structure definitions (planned second-pass layer).
+//! IBIS numerical strong-type definitions (re-export compatibility layer).
 //!
-//! This module defines the strongly-typed AST structures that represent a fully
-//! parsed IBIS file. These types are the target of the planned semantic analysis
-//! phase, which consumes the TOML output from [`ibis2ibstoml`] and converts
-//! it into validated, type-checked data.
+//! Re-exports the **numerically-typed** strong model from the `ibis2ibstoml`
+//! `schema::keyword_hierarchy` so that the `ibis_parser::schema::keyword_hierarchy`
+//! path stays usable by older consumers.
+//!
+//! All electrical quantities are `f64` (zero string pollution: `1.12p` →
+//! `1.12e-12`); `NA` maps to `None`. See
+//! [`ibis2ibstoml::schema::keyword_hierarchy`](ibis2ibstoml::schema::keyword_hierarchy)
+//! for the authoritative definitions.
 
-pub mod ibis_structure;
+pub use ibis2ibstoml::schema::keyword_hierarchy;
+
+// 兼容旧引用路径 `ibis_parser::ibis_parser::model`。
+pub use ibis2ibstoml::schema::keyword_hierarchy as model;

@@ -33,7 +33,7 @@ pub use extraction::{extract_keyword_name, extract_line_content};
 /// entry point.
 mod grammar {
     #[derive(pest_derive::Parser)]
-    #[grammar = "frontend/ibis.pest"]
+    #[grammar = "schema/ibis.pest"]
     pub struct IbisParser;
 }
 

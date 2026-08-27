@@ -1,0 +1,50 @@
+[
+    SectionNode {
+        keyword: "File_Header",
+        kind: FileHeader,
+        content: [],
+        children: [
+            SectionNode {
+                keyword: "IBIS ver",
+                kind: Regular,
+                content: [
+                    "2.1",
+                ],
+                children: [],
+            },
+            SectionNode {
+                keyword: "File name",
+                kind: Regular,
+                content: [
+                    "chip.ibs",
+                ],
+                children: [],
+            },
+            SectionNode {
+                keyword: "File Rev",
+                kind: Regular,
+                content: [
+                    "1.0",
+                ],
+                children: [],
+            },
+        ],
+    },
+    SectionNode {
+        keyword: "Component",
+        kind: Regular,
+        content: [
+            "MyChip",
+        ],
+        children: [
+            SectionNode {
+                keyword: "Manufacturer",
+                kind: Regular,
+                content: [
+                    "Acme",
+                ],
+                children: [],
+            },
+        ],
+    },
+]

@@ -1,0 +1,19 @@
+[File_Header]
+ibis_ver = "3.2"
+file_name = "invchain_test_0614.ibs"
+file_rev = "1.0"
+date = "Jun 14,2021"
+
+[[Component]]
+component = "invchain"
+[Component.Manufacturer]
+manufacturer = ""
+
+[[Model]]
+model = "driver2"
+model_type = "Output"
+polarity = "Non-Inverting"
+enable = "Active-High"
+c_comp = { col_header = ["typ", "min", "max"], data = ["0.468pF"] }
+vmeas = "0.9V"
+

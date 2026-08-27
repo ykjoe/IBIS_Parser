@@ -48,17 +48,19 @@ pub(crate) mod ast_types {
 /// File-header field classification — tell header fields from ordinary sections.
 mod header_field {
     use crate::frontend::ast_builder::ast_types::ParsedBlock;
+    use crate::schema::{file_header_section, normalize_keyword};
 
     /// Whether a keyword names a file header field (case-insensitive).
     ///
     /// Takes a keyword; returns `true` for known header fields such as
-    /// "IBIS ver" / "File name".
+    /// "IBIS ver" / "File name". 判定依据取自 [`ibis_schema.toml`](crate::schema) 的
+    /// `File_Header` 虚拟节段字段，不再硬编码。
     pub(super) fn is_header_field_keyword(keyword: &str) -> bool {
-        matches!(
-            keyword.to_ascii_lowercase().as_str(),
-            "ibis ver" | "comment char" | "file name" | "file rev"
-                | "date" | "source" | "notes" | "disclaimer" | "copyright"
-        )
+        let normalized = normalize_keyword(keyword);
+        file_header_section()
+            .fields
+            .iter()
+            .any(|field| normalize_keyword(&field.key) == normalized)
     }
 
     /// Whether a parsed block is a file header field (wraps

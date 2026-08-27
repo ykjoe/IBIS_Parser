@@ -1,0 +1,223 @@
+[File_Header]
+ibis_ver = "4.0"
+file_name = "u26a_800.ibs"
+file_rev = "2.4"
+date = "05/03/2007"
+source = "From silicon level SPICE model at Micron Technology, Inc."
+notes = "Revision History:"
+
+[[Component]]
+component = "MT47H64M4BP-3_25"
+[Component.Manufacturer]
+manufacturer = ""
+
+[[Component]]
+component = "MT47H64M4BP_CLP-3_25"
+[Component.Manufacturer]
+manufacturer = ""
+
+[[Component]]
+component = "MT47H32M8BP-3_25"
+[Component.Manufacturer]
+manufacturer = ""
+
+[[Component]]
+component = "MT47H32M8BP_CLP-3_25"
+[Component.Manufacturer]
+manufacturer = ""
+
+[[Component]]
+component = "MT47H16M16BG-3_25"
+[Component.Manufacturer]
+manufacturer = ""
+
+[[Component]]
+component = "MT47H16M16BG_CLP-3_25"
+[Component.Manufacturer]
+manufacturer = ""
+
+[[Model_Selector]]
+model_selector = "RDQS#"
+models = ["NF_IN_800        Not Used if either RDQS or Diff. Strobe are disabled", "RDQS_FULL_800    Full-Strength Output Driver", "RDQS_HALF_800    Reduced-Strength Output Driver"]
+
+[[Model_Selector]]
+model_selector = "DM_RDQS"
+models = ["DM_IN_800        DM_IN_800 input model", "DM_ODT50_800     DM Input model with 50 Ohm ODT Submodel", "DM_ODT75_800     DM Input model with 75 Ohm ODT Submodel", "DM_ODT150_800    DM Input model with 150 Ohm ODT Submodel", "RDQS_FULL_800    Full-Strength Output Driver if RDQS is enabled with no ODT", "RDQS_HALF_800    Reduced-Strength Output Driver if RDQS is enabled with no ODT"]
+
+[[Model_Selector]]
+model_selector = "DM"
+models = ["DM_IN_800           DM input model", "DM_ODT50_800        DM Input model with 50 Ohm ODT Submodel", "DM_ODT75_800        DM Input model with 75 Ohm ODT Submodel", "DM_ODT150_800       DM Input model with 150 Ohm ODT Submodel"]
+
+[[Model_Selector]]
+model_selector = "DQ"
+models = ["DQ_FULL_800             Full-Strength IO Driver with no ODT", "DQ_FULL_ODT50_800       Full-Strength IO Driver with 50 Ohm ODT Submodel", "DQ_FULL_ODT75_800       Full-Strength IO Driver with 75 Ohm ODT Submodel", "DQ_FULL_ODT150_800      Full-Strength IO Driver with 150 Ohm ODT Submodel", "DQ_HALF_800             Reduced-Strength IO Driver with no ODT", "DQ_HALF_ODT50_800       Reduced-Strength IO Driver with 50 Ohm ODT Submodel", "DQ_HALF_ODT75_800       Reduced-Strength IO Driver with 75 Ohm ODT Submodel", "DQ_HALF_ODT150_800      Reduced-Strength IO Driver with 150 Ohm ODT Submodel"]
+
+[[Model_Selector]]
+model_selector = "DQS#"
+models = ["DQ_FULL_800             Full-Strength IO Driver with no ODT", "DQ_FULL_ODT50_800       Full-Strength IO Driver with 50 Ohm ODT Submodel", "DQ_FULL_ODT75_800       Full-Strength IO Driver with 75 Ohm ODT Submodel", "DQ_FULL_ODT150_800      Full-Strength IO Driver with 150 Ohm ODT Submodel", "DQ_HALF_800             Reduced-Strength IO Driver with no ODT", "DQ_HALF_ODT50_800       Reduced-Strength IO Driver with 50 Ohm ODT Submodel", "DQ_HALF_ODT75_800       Reduced-Strength IO Driver with 75 Ohm ODT Submodel", "DQ_HALF_ODT150_800      Reduced-Strength IO Driver with 150 Ohm ODT Submodel", "NF_IN_800               (Use to disable DQS#)"]
+
+[[Model]]
+model = "CLKIN_800"
+model_type = "Input"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["1.05pF", "0.71pF", "1.39pF"] }
+
+[[Model]]
+model = "DM_IN_800"
+model_type = "Input"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.69pF", "2.29pF", "3.07pF"] }
+
+[[Model]]
+model = "DM_ODT150_800"
+model_type = "Input"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.89pF", "2.49pF", "3.28pF"] }
+
+[[Model]]
+model = "DM_ODT50_800"
+model_type = "Input"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["3.15pF", "2.76pF", "3.51pF"] }
+
+[[Model]]
+model = "DM_ODT75_800"
+model_type = "Input"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.95pF", "2.55pF", "3.34pF"] }
+
+[[Model]]
+model = "DQ_FULL_800"
+model_type = "I/O"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.69pF", "2.29pF", "3.07pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "DQ_FULL_ODT150_800"
+model_type = "I/O"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.89pF", "2.49pF", "3.28pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "DQ_FULL_ODT50_800"
+model_type = "I/O"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["3.15pF", "2.76pF", "3.51pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "DQ_FULL_ODT75_800"
+model_type = "I/O"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.95pF", "2.55pF", "3.34pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "DQ_HALF_800"
+model_type = "I/O"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.69pF", "2.29pF", "3.07pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "DQ_HALF_ODT150_800"
+model_type = "I/O"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.89pF", "2.49pF", "3.28pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "DQ_HALF_ODT50_800"
+model_type = "I/O"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["3.15pF", "2.76pF", "3.51pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "DQ_HALF_ODT75_800"
+model_type = "I/O"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.95pF", "2.55pF", "3.34pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "IN_800"
+model_type = "Input"
+vinl = "700mV"
+vinh = "1.1V"
+c_comp = { col_header = ["typ", "min", "max"], data = ["1.1pF", "0.81pF", "1.36pF"] }
+
+[[Model]]
+model = "NF_IN_800"
+model_type = "Terminator"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.69pF", "2.29pF", "3.07pF"] }
+
+[[Model]]
+model = "RDQS_FULL_800"
+model_type = "3-state"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.69pF", "2.29pF", "3.07pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Model]]
+model = "RDQS_HALF_800"
+model_type = "3-state"
+c_comp = { col_header = ["typ", "min", "max"], data = ["2.69pF", "2.29pF", "3.07pF"] }
+vmeas = "900mV"
+cref = "0pF"
+rref = "25Ohm"
+vref = "900mV"
+
+[[Submodel]]
+submodel = "150ohm_ODT_800"
+submodel_type = "Dynamic_clamp"
+
+[[Submodel]]
+submodel = "50ohm_ODT_800"
+submodel_type = "Dynamic_clamp"
+
+[[Submodel]]
+submodel = "75ohm_ODT_800"
+submodel_type = "Dynamic_clamp"
+
