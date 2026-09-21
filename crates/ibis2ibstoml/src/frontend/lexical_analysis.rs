@@ -42,16 +42,18 @@ mod grammar {
 /// pest path and the recovery path.
 pub(crate) mod parser {
     /// Read the keyword name out of a `[Keyword]` header token.
+    ///
+    /// Returns `None` unless the token opens with `[`, so that a content line
+    /// merely mentioning a bracket (`ODT modeled with [Submodel]`) is never
+    /// read as a keyword header.
     pub(crate) fn keyword_name(token: &str) -> Option<String> {
-        let trimmed = token.trim();
-        let closing = trimmed.find(']')?;
-        let inside = &trimmed[..=closing];
-        let content = &inside[1..inside.len() - 1];
-        if content.is_empty() {
-            None
-        } else {
-            Some(content.trim().to_string())
+        let header = token.trim().strip_prefix('[')?;
+        let closing = header.find(']')?;
+        let name = header[..closing].trim();
+        if name.is_empty() || name.contains('[') {
+            return None;
         }
+        Some(name.to_string())
     }
 
     /// Read the normalized text of a content line.
@@ -85,6 +87,7 @@ mod extraction {
 /// Test function - test the extraction functions in mod [`extraction`] primitive.
 #[cfg(test)]
 mod tests {
+    
     use pest::Parser;
 
     use super::*;
@@ -133,6 +136,14 @@ mod tests {
         assert_eq!(parser::keyword_name("[End]"), Some("End".into()));
         assert_eq!(parser::keyword_name("plain content"), None);
         assert_eq!(parser::keyword_name("[]"), None);
+    }
+
+    #[test]
+    fn test_keyword_name_requires_a_leading_bracket() {
+        assert_eq!(parser::keyword_name("ODT modeled with [Submodel]"), None);
+        assert_eq!(parser::keyword_name("Added new [Receiver Thresholds]"), None);
+        assert_eq!(parser::keyword_name("["), None);
+        assert_eq!(parser::keyword_name("[Model Spec"), None);
     }
 
     #[test]

@@ -38,8 +38,12 @@ mod block_grouping {
     use crate::frontend::ast_builder::ParsedBlock;
     use crate::frontend::lexical_analysis::parser;
     use crate::frontend::lexical_analysis::{extract_keyword_name, extract_line_content};
+    use crate::schema::{find_root, normalize_keyword};
 
     use super::line_type::is_continuation_line;
+
+    /// Normalized spelling of the `[End]` terminator keyword.
+    const END_KEYWORD: &str = "end";
 
     /// Walk pest pairs and group them into keyword blocks.
     ///
@@ -148,8 +152,8 @@ mod block_grouping {
                     accumulated_content.clear();
                 }
 
+                current_rule = Some(recovered_rule(&keyword_name));
                 current_keyword = Some(keyword_name);
-                current_rule = Some(Rule::keyword);
 
                 // Text after the bracket on the same line belongs to this block.
                 if let Some(closing_bracket) = trimmed_line.find(']') {
@@ -176,10 +180,30 @@ mod block_grouping {
 
         blocks
     }
+
+    /// Rule variant to tag a recovered block with.
+    ///
+    /// The recovery path reads raw lines rather than grammar rules, so the
+    /// container level is recovered from the schema instead: a root section
+    /// becomes a first-level container (it owns the sections that follow),
+    /// `[End]` becomes the terminator, and anything else stays a second-level
+    /// section.
+    fn recovered_rule(keyword: &str) -> Rule {
+        if normalize_keyword(keyword) == END_KEYWORD {
+            return Rule::kw_end;
+        }
+        if find_root(keyword).is_some() {
+            Rule::first_level_keyword
+        } else {
+            Rule::second_level_keyword
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::frontend::Rule;
+
     use super::*;
 
     #[test]
@@ -203,6 +227,31 @@ mod tests {
         assert_eq!(blocks[1].content, vec!["STM32F103".to_string()]);
         assert_eq!(blocks[2].keyword, "Manufacturer");
         assert_eq!(blocks[2].content, vec!["STMicro".to_string()]);
+    }
+
+    #[test]
+    fn test_recovered_rule_reads_the_container_level_from_the_schema() {
+        let ibis_content = "\
+[Component] STM32F103
+[Manufacturer] STMicro
+[End]
+";
+        let blocks = recover_blocks(ibis_content);
+        assert_eq!(blocks[0].rule, Rule::first_level_keyword);
+        assert_eq!(blocks[1].rule, Rule::second_level_keyword);
+        assert_eq!(blocks[2].rule, Rule::kw_end);
+    }
+
+    #[test]
+    fn test_recover_blocks_keeps_bracketed_content_lines_as_content() {
+        let ibis_content = "\
+[Notes]
+ODT modeled with [Submodel] support
+";
+        let blocks = recover_blocks(ibis_content);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].keyword, "Notes");
+        assert_eq!(blocks[0].content, vec!["ODT modeled with [Submodel] support".to_string()]);
     }
 
     #[test]

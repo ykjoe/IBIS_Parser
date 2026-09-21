@@ -1,569 +1,498 @@
-//! TOML output — serialize the strongly-typed [`IBIS_File`] into a TOML string.
-//!
-//! Serialization rules (see the architecture book, section 4):
-//!
-//! - String fields → `key = "value"`; `Option<None>` keys are omitted.
-//! - **Quantities → `key = "value+unit"`**（如 `key = "1.65V"`、`key = "0.8"`）—
-//!   保留原始「数值 + 单位」原文，不做归一化换算，且为合法 TOML 字符串。
-//! - corner（角点三元组）→ 内联表 `key = { col_header = ["typ", "min", "max"], data = [...] }`
-//!   （以 `Table` 统一表示，替代已删除的 `Triplet`；单元格为字符串）。
-//! - I-V 曲线 / 表格 keyword（`[Pulldown]` / `[Pullup]` / `[Ramp]` / `[GND Clamp]` 等在 IBIS
-//!   中以 `[]` 括起的**子级 keyword**）→ **TOML section** `[Model.xxx]`（对应 IBIS 的 `[]`
-//!   括起形式）；section 内再用**同名字段**承载内联表：
-//!   `[Model.Pulldown]` + `pulldown = { col_header = [...], data = [[...]] }`。
-//! - `Model` / `Submodel` 中非 `[]` 括起的 inline 量（如 `C_comp`）→ `[[Model]]` 元素上的
-//!   内联表字段 `key = { col_header, data }`。
-//! - `Component` 的 `[Pin]`（内部仅一个 `pin` 字段，类型为 Table）→ TOML section
-//!   `[Component.Pin]` + `Pin = { col_header = [...], data = [[...]] }`（列 =
-//!   signal_name / model_name / R_pin / L_pin / C_pin）。
-//! - `Component` 的其余**行式表**子级 keyword（`[Pin Mapping]` / `[Bus Label]` /
-//!   `[Diff Pin]` / `[Circuit Call]`）→ `[[Component.xxx]]` array-of-tables。
-//! - `Vec<T>` / `IndexMap<K, T>` fields → `[[...]]` array-of-tables。
+// =============================================================================
+// toml — render the parsed tree into a TOML document
+//
+// The emitter consumes the backend's typed parsed tree (`ParsedNode`) and writes
+// a TOML string. It never touches the frontend AST and performs no semantic work:
+// every value is written exactly as it was parsed.
+//
+// Layout rules:
+//
+//   - one TOML table per keyword node: `[Path.Keyword]` for a single instance and
+//     `[[Path.Keyword]]` for a repeated one (`occurrence == Multiple`, or the same
+//     keyword appearing several times among its siblings);
+//   - the keyword's own value and its params become fields of that table:
+//     `manufacturer = "Acme"`, `r_pkg = [...]`, `"dv/dt_r" = [...]`;
+//   - the virtual `[File_Header]` container flattens its entries into plain fields
+//     (`ibis_ver = "2.1"`) instead of nested tables;
+//   - keys that are not bare TOML keys (`dv/dt_r`, `vinh+`, names with spaces) are
+//     quoted exactly as `ibis_schema.toml` spells them.
+//
+// Value shapes (TOML has no tuples, so a corner becomes a three-element array):
+//
+//   - `Text`   → `"original text"` (quantities keep their unit: `"1.65V"`);
+//   - `Corner` → a one-row table `{ header = ["typ", "min", "max"], data = ["typ", "min", "max"] }`;
+//   - `Table`  → `{ header = [...], data = [[...]] }`;
+//   - `Lines`  → a multi-line basic string whose closing delimiter sits on its own
+//                line (`"""\nline\nline\n"""`), and a plain string for at most one line.
+//
+// Multi-line arrays inside the inline table are valid TOML 1.1, which keeps wide
+// I-V tables readable while staying parseable.
+//
+// The code is grouped along the two halves of that job: `TomlWriter` walks the
+// tree and appends tables/fields, while the `text` sub-module holds the pure
+// formatters that turn one value or one key into its TOML spelling.
+// =============================================================================
 
-use std::fmt::Write as FmtWrite;
+//! TOML rendering of the parsed tree.
 
-use crate::schema::keyword_hierarchy::*;
+use std::fmt::Write as _;
 
-// -----------------------------------------------------------------------------
-// Value emitters
-// -----------------------------------------------------------------------------
+use crate::backend::{Corner, ParsedField, ParsedNode, ParsedTable, ParsedValue};
+use crate::schema::Occurrence;
 
-/// Escape and wrap a raw string value for TOML output.
-fn emit_string(buf: &mut String, key: &str, value: &str) {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    let _ = writeln!(buf, "{} = \"{}\"", key, escaped);
+/// The virtual container holding the file header entries.
+const FILE_HEADER_CONTAINER: &str = "File_Header";
+
+/// Renders the parsed tree as a TOML document.
+///
+/// # Parameters
+///
+/// * `nodes` — Root-level parsed nodes, in document order.
+///
+/// # Returns
+///
+/// * `String` — The TOML document (tables, array-of-tables and values).
+///
+/// # Examples
+///
+/// ```ignore
+/// let parsed = ibis2ibstoml::parse_to_parsed("[IBIS ver] 2.1\n")?;
+/// let document = ibis2ibstoml::emitter::serialize_parsed_tree(&parsed);
+/// assert!(document.contains("ibis_ver = \"2.1\""));
+/// ```
+pub fn serialize_parsed_tree(nodes: &[ParsedNode]) -> String {
+    let mut writer = TomlWriter { document: String::new() };
+    writer.write_siblings(nodes, "");
+    writer.document
 }
 
-/// Emit an `Option<String>` field (omitted when `None`).
-fn emit_opt_string(buf: &mut String, key: &str, value: &Option<String>) {
-    if let Some(value) = value {
-        emit_string(buf, key, value);
+// ---------------------------------------------------------------------------
+// Document writer — walks the parsed tree and appends tables, fields and blanks
+// ---------------------------------------------------------------------------
+
+/// Accumulates the rendered TOML text while walking the parsed tree.
+#[derive(Debug)]
+struct TomlWriter {
+    document: String,  // Growing TOML document, returned by `serialize_parsed_tree`.
+}
+
+impl TomlWriter {
+    /// Renders a group of sibling nodes under a shared parent path.
+    ///
+    /// Takes the `nodes` and their `parent_path`; appends one blank line after
+    /// every node so the output stays readable.
+    fn write_siblings(&mut self, nodes: &[ParsedNode], parent_path: &str) {
+        for node in nodes {
+            let as_array = Self::is_array_of_tables(nodes, node);
+            self.write_node(node, parent_path, as_array);
+            self.document.push('\n');
+        }
+    }
+
+    /// Whether a node must be written as an array-of-tables.
+    ///
+    /// Takes the sibling `nodes` and one `node`; returns `true` when the schema marks
+    /// the keyword as multiple, or when the same keyword repeats among the siblings
+    /// (which keeps the output valid TOML even for a flattened tree).
+    fn is_array_of_tables(nodes: &[ParsedNode], node: &ParsedNode) -> bool {
+        if node.occurrence == Occurrence::Multiple {
+            return true;
+        }
+        let same_keyword_count = nodes
+            .iter()
+            .filter(|sibling| sibling.keyword == node.keyword)
+            .count();
+        same_keyword_count > 1
+    }
+
+    /// Renders one node: its table header, its fields and then its children.
+    ///
+    /// Takes the `node`, the `parent_path` of its scope and whether it is written
+    /// as `as_array`.
+    fn write_node(&mut self, node: &ParsedNode, parent_path: &str, as_array: bool) {
+        let segment = text::key_segment(&node.keyword);
+        let path = if parent_path.is_empty() {
+            segment
+        } else {
+            format!("{parent_path}.{segment}")
+        };
+
+        // ── Virtual container: its entries become plain fields of `[File_Header]` ──
+        if node.keyword == FILE_HEADER_CONTAINER {
+            self.write_table_header(&path, false);
+            for child in &node.children {
+                for field in &child.fields {
+                    self.write_field(field);
+                }
+            }
+            return;
+        }
+
+        self.write_table_header(&path, as_array);
+        for field in &node.fields {
+            self.write_field(field);
+        }
+        self.write_siblings(&node.children, &path);
+    }
+
+    /// Writes a table header: `[[path]]` when `as_array`, else `[path]`.
+    ///
+    /// Takes the dotted `path` and whether the node repeats.
+    fn write_table_header(&mut self, path: &str, as_array: bool) {
+        if as_array {
+            let _ = writeln!(self.document, "[[{path}]]");
+        } else {
+            let _ = writeln!(self.document, "[{path}]");
+        }
+    }
+
+    /// Renders one `key = value` line.
+    ///
+    /// Takes the `field`; appends the rendered line.
+    fn write_field(&mut self, field: &ParsedField) {
+        let key = text::key_segment(&field.key);
+        let value = text::render_value(&field.value);
+        let _ = writeln!(self.document, "{key} = {value}");
     }
 }
 
-/// 紧凑表示一个 `Quantity` 的裸文本（不加引号）：`-2mA`、`3.3`、`1.9/597p`。
-fn quantity_bare(q: &Quantity) -> String {
-    match &q.value {
-        Scalar::Number(n) => {
-            let num = format!("{n}");
-            match &q.unit {
-                Some(unit) => format!("{num}{unit}"),
-                None => num,
+// ---------------------------------------------------------------------------
+// Text primitives — buffer-free formatters for one value, one array or one key
+// ---------------------------------------------------------------------------
+
+/// Pure formatters turning one parsed fragment into its TOML spelling.
+///
+/// Each function takes the fragment and returns a `String` without writing to a
+/// buffer, so [`TomlWriter`](super::TomlWriter) keeps no quoting or escaping detail.
+mod text {
+    use super::{Corner, ParsedTable, ParsedValue};
+
+    /// Renders one value as TOML.
+    ///
+    /// Takes the parsed `value`; returns its TOML text.
+    pub(super) fn render_value(value: &ParsedValue) -> String {
+        match value {
+            ParsedValue::Text(text) => quote(text),
+            ParsedValue::Corner(corner) => render_corner(corner),
+            ParsedValue::Table(table) => render_table(table),
+            ParsedValue::Lines(lines) => render_lines(lines),
+        }
+    }
+
+    /// Renders a corner as a one-row table.
+    ///
+    /// Takes the `corner`; returns
+    /// `{ header = ["typ", "min", "max"], data = ["typ", "min", "max"] }`, which keeps
+    /// the corner readable on a single line while using the same shape as any table.
+    fn render_corner(corner: &Corner) -> String {
+        let header_values = ["typ".to_string(), "min".to_string(), "max".to_string()];
+        let header = render_string_array(&header_values);
+        let row_values = [corner.0.clone(), corner.1.clone(), corner.2.clone()];
+        let data = render_string_array(&row_values);
+        format!("{{ header = {header}, data = {data} }}")
+    }
+
+    /// Renders a table as an inline table with a multi-line `data` array.
+    ///
+    /// Takes the `table`; returns `{ header = [...], data = [[...]] }`.
+    fn render_table(table: &ParsedTable) -> String {
+        let header = render_string_array(&table.header);
+        let mut rendered = format!("{{ header = {header}, data = [");
+        for row in &table.data {
+            rendered.push('\n');
+            rendered.push_str("    ");
+            rendered.push_str(&render_string_array(row));
+            rendered.push(',');
+        }
+        if !table.data.is_empty() {
+            rendered.push('\n');
+        }
+        rendered.push_str("] }");
+        rendered
+    }
+
+    /// Renders ordered free-text lines as a TOML string, not a list of bracketed values.
+    ///
+    /// Takes the `lines`; returns `""` for an empty list, a plain string for a single
+    /// line, and a multi-line basic string otherwise:
+    ///
+    /// ```toml
+    /// notes = """
+    /// first line
+    /// second line
+    /// """
+    /// ```
+    ///
+    /// The closing `"""` always sits on a line of its own, below the last text line.
+    /// TOML drops the newline right after the opening `"""` and keeps the one before the
+    /// closing delimiter, so the value is `lines.join("\n")` plus a trailing newline.
+    fn render_lines(lines: &[String]) -> String {
+        match lines {
+            [] => "\"\"".to_string(),
+            [single] => quote(single),
+            many => {
+                let mut rendered = String::from("\"\"\"\n");
+                for line in many {
+                    rendered.push_str(&escape_basic(line));
+                    rendered.push('\n');
+                }
+                rendered.push_str("\"\"\"");
+                rendered
             }
         }
-        Scalar::Ratio(r) => {
-            format!("{}/{}", quantity_bare(&r.numerator), quantity_bare(&r.denominator))
+    }
+
+    /// Renders string values as a single-line TOML array.
+    ///
+    /// Takes the `values`; returns `["a", "b"]` (or `[]` when empty).
+    fn render_string_array(values: &[String]) -> String {
+        let quoted: Vec<String> = values.iter().map(|value| quote(value)).collect();
+        format!("[{}]", quoted.join(", "))
+    }
+
+    /// Renders a key or path segment, quoting it when it is not a bare TOML key.
+    ///
+    /// Takes the raw `raw` text; returns the bare key when it is alphanumeric with
+    /// `_`/`-`, and a quoted key otherwise (`"dv/dt_r"`, `"vinh+"`).
+    pub(super) fn key_segment(raw: &str) -> String {
+        let is_bare = !raw.is_empty()
+            && raw
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-');
+        if is_bare {
+            raw.to_string()
+        } else {
+            quote(raw)
         }
     }
-}
 
-/// 内联序列化一个 `Quantity` 为合法 TOML 字符串：`"-2mA"`、`"3.3"`、`"1.9/597p"`。
-fn quantity_string(q: &Quantity) -> String {
-    let bare = quantity_bare(q);
-    format!("\"{}\"", bare.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// Emit a `Quantity` field as a string.
-fn emit_quantity(buf: &mut String, key: &str, q: &Quantity) {
-    let _ = writeln!(buf, "{} = {}", key, quantity_string(q));
-}
-
-/// Emit an `Option<Quantity>` field (omitted when `None`).
-fn emit_opt_quantity(buf: &mut String, key: &str, q: &Option<Quantity>) {
-    if let Some(q) = q {
-        emit_quantity(buf, key, q);
-    }
-}
-
-/// 内联序列化一个表格单元格（Quantity 或 Text）为合法 TOML 字符串。
-fn cell_compact(cell: &Cell) -> String {
-    match cell {
-        Cell::Quantity(q) => quantity_string(q),
-        Cell::Text(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
-    }
-}
-
-/// corner 表内联字符串：
-/// `{ col_header = ["typ", "min", "max"], data = ["typ", "min", "max"] }`。
-fn corner_table_inline(table: &Table) -> String {
-    let cells: Vec<String> = table
-        .matrix
-        .first()
-        .map(|row| row.iter().map(cell_compact).collect())
-        .unwrap_or_default();
-    format!(
-        "{{ col_header = [\"typ\", \"min\", \"max\"], data = [{}] }}",
-        cells.join(", ")
-    )
-}
-
-/// Emit 一个 corner（角点三元组）字段为内联表。
-fn emit_corner_table(buf: &mut String, key: &str, table: &Table) {
-    let _ = writeln!(buf, "{} = {}", key, corner_table_inline(table));
-}
-
-/// Emit an `Option<Table>` corner 字段（omitted when `None`）。
-fn emit_opt_corner_table(buf: &mut String, key: &str, table: &Option<Table>) {
-    if let Some(table) = table {
-        emit_corner_table(buf, key, table);
-    }
-}
-
-/// Emit a `Vec<String>` field as a TOML array.
-fn emit_string_array(buf: &mut String, key: &str, values: &[String]) {
-    if values.is_empty() {
-        return;
-    }
-    let items: Vec<String> = values
-        .iter()
-        .map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")))
-        .collect();
-    let _ = writeln!(buf, "{} = [{}]", key, items.join(", "));
-}
-
-/// 表格内联字符串：`{ col_header = [...], data = [\n    [...],\n] }`。
-///
-/// TOML 1.0 内联表 `{ }` 必须单行开合（不允许 `{` 后直接换行），但**数组值内部可跨行**：
-/// 故 `col_header` 与 `{` 同行，仅 `data` 数组跨行，保证大表可读且合法。
-fn table_inline_string(table: &Table) -> String {
-    let cols: Vec<String> = table
-        .col_header
-        .iter()
-        .map(|c| format!("\"{}\"", c.replace('\\', "\\\\").replace('"', "\\\"")))
-        .collect();
-    let mut s = format!("{{ col_header = [{}], data = [", cols.join(", "));
-    for row in &table.matrix {
-        let cells: Vec<String> = row.iter().map(cell_compact).collect();
-        s.push('\n');
-        s.push_str(&format!("    [{}],", cells.join(", ")));
-    }
-    s.push_str("\n] }");
-    s
-}
-
-/// Emit a `Table` 为内联表字段（用于 waveform 的 `composite_current` 等内嵌表）。
-fn emit_table_inline(buf: &mut String, key: &str, table: &Table) {
-    let _ = writeln!(buf, "{} = {}", key, table_inline_string(table));
-}
-
-/// Emit 一个 I-V 曲线 / 表格 keyword 为 TOML section + 同名字段内联表：
-/// `[path]` 换行 `key = { col_header = [...], data = [[...]] }`。
-fn emit_table_section(buf: &mut String, path: &str, key: &str, table: &Table) {
-    let _ = writeln!(buf, "[{}]", path);
-    let _ = writeln!(buf, "{} = {}", key, table_inline_string(table));
-}
-
-/// Emit an `Option<Table>` 曲线 / 表格 keyword section（omitted when `None`）。
-fn emit_opt_table_section(buf: &mut String, path: &str, key: &str, table: &Option<Table>) {
-    if let Some(table) = table {
-        emit_table_section(buf, path, key, table);
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Struct serializers
-// -----------------------------------------------------------------------------
-
-fn serialize_header(buf: &mut String, header: &IBIS_File_Header) {
-    let _ = writeln!(buf, "[File_Header]");
-    emit_string(buf, "ibis_ver", &header.ibis_ver);
-    emit_opt_string(buf, "comment_char", &header.comment_char);
-    emit_string(buf, "file_name", &header.file_name);
-    emit_string(buf, "file_rev", &header.file_rev);
-    emit_opt_string(buf, "date", &header.date);
-    emit_opt_string(buf, "source", &header.source);
-    emit_opt_string(buf, "notes", &header.notes);
-    emit_opt_string(buf, "disclaimer", &header.disclaimer);
-    emit_opt_string(buf, "copyright", &header.copyright);
-    let _ = writeln!(buf);
-}
-
-fn serialize_package(buf: &mut String, path: &str, package: &Component_Package) {
-    let _ = writeln!(buf, "[{}]", path);
-    emit_corner_table(buf, "r_pkg", &package.r_pkg);
-    emit_corner_table(buf, "l_pkg", &package.l_pkg);
-    emit_corner_table(buf, "c_pkg", &package.c_pkg);
-}
-
-fn serialize_component(buf: &mut String, component: &IBIS_Component) {
-    let _ = writeln!(buf, "[[Component]]");
-    emit_string(buf, "component", &component.component);
-    emit_opt_string(buf, "si_location", &component.si_location);
-    emit_opt_string(buf, "timing_location", &component.timing_location);
-
-    let _ = writeln!(buf, "[Component.Manufacturer]");
-    emit_string(buf, "manufacturer", &component.manufacturer);
-
-    if let Some(package) = &component.package {
-        serialize_package(buf, "Component.Package", package);
+    /// Escapes the body of a TOML basic string (single- or multi-line).
+    ///
+    /// Takes the raw `text`; returns it with backslashes and double quotes escaped,
+    /// which is valid in both `"…"` and `"""…"""` forms.
+    fn escape_basic(text: &str) -> String {
+        text.replace('\\', "\\\\").replace('"', "\\\"")
     }
 
-    // [Pin]：Table（列 = signal_name / model_name / R_pin / L_pin / C_pin）。
-    if let Some(pin) = &component.pin {
-        emit_table_section(buf, "Component.Pin", "Pin", &pin.pin);
+    /// Wraps text in a TOML basic string, escaping backslashes and quotes.
+    ///
+    /// Takes the raw `text`; returns the quoted form.
+    fn quote(text: &str) -> String {
+        format!("\"{}\"", escape_basic(text))
     }
-
-    for mapping in &component.pin_mappings {
-        let _ = writeln!(buf, "[[Component.Pin_Mapping]]");
-        emit_string(buf, "pin_name", &mapping.pin_name);
-        emit_string(buf, "pulldown_ref", &mapping.pulldown_ref);
-        emit_string(buf, "pullup_ref", &mapping.pullup_ref);
-        emit_opt_string(buf, "gnd_clamp_ref", &mapping.gnd_clamp_ref);
-        emit_opt_string(buf, "power_clamp_ref", &mapping.power_clamp_ref);
-        emit_opt_string(buf, "ext_ref", &mapping.ext_ref);
-    }
-
-    for label in &component.bus_labels {
-        let _ = writeln!(buf, "[[Component.Bus_Label]]");
-        emit_string(buf, "bus_label", &label.bus_label);
-        emit_string(buf, "signal_name", &label.signal_name);
-    }
-
-    for diff in &component.diff_pins {
-        let _ = writeln!(buf, "[[Component.Diff_Pin]]");
-        emit_string(buf, "pin_name", &diff.pin_name);
-        emit_string(buf, "inv_pin", &diff.inv_pin);
-        emit_opt_quantity(buf, "vdiff", &diff.vdiff);
-        emit_opt_quantity(buf, "tdelay_typ", &diff.tdelay_typ);
-        emit_opt_quantity(buf, "tdelay_min", &diff.tdelay_min);
-        emit_opt_quantity(buf, "tdelay_max", &diff.tdelay_max);
-    }
-
-    emit_string_array(buf, "node_declarations", &component.node_declarations);
-
-    for call in &component.circuit_calls {
-        let _ = writeln!(buf, "[[Component.Circuit_Call]]");
-        emit_string(buf, "signal_pin", &call.signal_pin);
-        emit_opt_string(buf, "diff_signal_pins", &call.diff_signal_pins);
-        emit_opt_string(buf, "series_pins", &call.series_pins);
-        emit_opt_string(buf, "port_map", &call.port_map);
-        emit_opt_string(buf, "converter_parameters", &call.converter_parameters);
-        emit_opt_string(buf, "parameters", &call.parameters);
-    }
-
-    let _ = writeln!(buf);
-}
-
-fn serialize_model_selector(buf: &mut String, selector: &IBIS_Model_Selector) {
-    let _ = writeln!(buf, "[[Model_Selector]]");
-    emit_string(buf, "model_selector", &selector.model_selector);
-    emit_string_array(buf, "models", &selector.models);
-    let _ = writeln!(buf);
-}
-
-fn serialize_ramp(buf: &mut String, path: &str, ramp: &Model_Ramp) {
-    let _ = writeln!(buf, "[{}]", path);
-    // 分式保留原始 IBIS 关键字名（含 '/'，故需引号）与原表达方式。
-    emit_corner_table(buf, "\"dv/dt_r\"", &ramp.dv_dt_r);
-    emit_corner_table(buf, "\"dv/dt_f\"", &ramp.dv_dt_f);
-    emit_opt_quantity(buf, "r_load", &ramp.r_load);
-}
-
-fn serialize_waveform(buf: &mut String, path: &str, waveform: &Model_Waveform) {
-    let _ = writeln!(buf, "[[{}]]", path);
-    emit_opt_quantity(buf, "r_fixture", &waveform.r_fixture);
-    emit_opt_quantity(buf, "v_fixture", &waveform.v_fixture);
-    emit_opt_quantity(buf, "v_fixture_min", &waveform.v_fixture_min);
-    emit_opt_quantity(buf, "v_fixture_max", &waveform.v_fixture_max);
-    emit_opt_quantity(buf, "c_fixture", &waveform.c_fixture);
-    emit_opt_quantity(buf, "l_fixture", &waveform.l_fixture);
-    if let Some(composite) = &waveform.composite_current {
-        emit_table_inline(buf, "composite_current", composite);
-    }
-}
-
-fn serialize_model(buf: &mut String, model: &IBIS_Model) {
-    let _ = writeln!(buf, "[[Model]]");
-    emit_string(buf, "model", &model.model);
-    emit_string(buf, "model_type", &model.model_type);
-    emit_opt_string(buf, "polarity", &model.polarity);
-    emit_opt_string(buf, "enable", &model.enable);
-    emit_opt_quantity(buf, "vinl", &model.vinl);
-    emit_opt_quantity(buf, "vinh", &model.vinh);
-    emit_opt_corner_table(buf, "c_comp", &model.c_comp);
-    emit_opt_quantity(buf, "vmeas", &model.vmeas);
-    emit_opt_quantity(buf, "cref", &model.cref);
-    emit_opt_quantity(buf, "rref", &model.rref);
-    emit_opt_quantity(buf, "vref", &model.vref);
-    emit_opt_quantity(buf, "rref_diff", &model.rref_diff);
-    emit_opt_quantity(buf, "cref_diff", &model.cref_diff);
-
-    emit_opt_corner_table(buf, "temperature_range", &model.temperature_range);
-    emit_opt_corner_table(buf, "voltage_range", &model.voltage_range);
-    emit_opt_corner_table(buf, "pullup_reference", &model.pullup_reference);
-    emit_opt_corner_table(buf, "pulldown_reference", &model.pulldown_reference);
-    emit_opt_corner_table(buf, "power_clamp_reference", &model.power_clamp_reference);
-    emit_opt_corner_table(buf, "gnd_clamp_reference", &model.gnd_clamp_reference);
-    emit_opt_corner_table(buf, "external_reference", &model.external_reference);
-
-    if let Some(spec) = &model.model_spec {
-        let _ = writeln!(buf, "[Model.Model_Spec]");
-        emit_opt_quantity(buf, "vinh", &spec.vinh);
-        emit_opt_quantity(buf, "vinl", &spec.vinl);
-    }
-
-    if let Some(thresholds) = &model.receiver_thresholds {
-        let _ = writeln!(buf, "[Model.Receiver_Thresholds]");
-        emit_opt_quantity(buf, "vth", &thresholds.vth);
-        emit_opt_quantity(buf, "vinh_ac", &thresholds.vinh_ac);
-        emit_opt_quantity(buf, "vinl_ac", &thresholds.vinl_ac);
-    }
-
-    if let Some(ramp) = &model.ramp {
-        serialize_ramp(buf, "Model.Ramp", ramp);
-    }
-
-    // I-V 曲线 / 表格 keyword（IBIS 中以 `[]` 括起的子级 keyword）→
-    // TOML section `[Model.xxx]` + 同名字段内联表 `xxx = { col_header, data }`。
-    emit_opt_table_section(buf, "Model.Pulldown", "pulldown", &model.pulldown);
-    emit_opt_table_section(buf, "Model.Pullup", "pullup", &model.pullup);
-    emit_opt_table_section(buf, "Model.GND_Clamp", "gnd_clamp", &model.gnd_clamp);
-    emit_opt_table_section(buf, "Model.Power_Clamp", "power_clamp", &model.power_clamp);
-    emit_opt_table_section(buf, "Model.POWER_Table", "power_table", &model.isso_pu);
-    emit_opt_table_section(buf, "Model.GND_Table", "gnd_table", &model.isso_pd);
-    emit_opt_table_section(buf, "Model.Series_Current", "series_current", &model.series_current);
-
-    for waveform in &model.rising_waveforms {
-        serialize_waveform(buf, "Model.Rising_Waveform", waveform);
-    }
-    for waveform in &model.falling_waveforms {
-        serialize_waveform(buf, "Model.Falling_Waveform", waveform);
-    }
-
-    let _ = writeln!(buf);
-}
-
-fn serialize_submodel(buf: &mut String, submodel: &IBIS_Submodel) {
-    let _ = writeln!(buf, "[[Submodel]]");
-    emit_string(buf, "submodel", &submodel.submodel);
-    emit_string(buf, "submodel_type", &submodel.submodel_type);
-
-    if let Some(ramp) = &submodel.ramp {
-        serialize_ramp(buf, "Submodel.Ramp", ramp);
-    }
-
-    // Submodel 的 I-V 曲线 / 表格 keyword → TOML section + 同名字段内联表。
-    emit_opt_table_section(buf, "Submodel.Power_Pulse_Table", "power_pulse_table", &submodel.power_pulse_table);
-    emit_opt_table_section(buf, "Submodel.GND_Pulse_Table", "gnd_pulse_table", &submodel.gnd_pulse_table);
-    emit_opt_table_section(buf, "Submodel.Pulldown", "pulldown", &submodel.pulldown);
-    emit_opt_table_section(buf, "Submodel.Pullup", "pullup", &submodel.pullup);
-    emit_opt_table_section(buf, "Submodel.GND_Clamp", "gnd_clamp", &submodel.gnd_clamp);
-    emit_opt_table_section(buf, "Submodel.Power_Clamp", "power_clamp", &submodel.power_clamp);
-
-    for waveform in &submodel.rising_waveforms {
-        serialize_waveform(buf, "Submodel.Rising_Waveform", waveform);
-    }
-    for waveform in &submodel.falling_waveforms {
-        serialize_waveform(buf, "Submodel.Falling_Waveform", waveform);
-    }
-
-    let _ = writeln!(buf);
-}
-
-fn serialize_external_circuit(buf: &mut String, circuit: &IBIS_External_Circuit) {
-    let _ = writeln!(buf, "[[External_Circuit]]");
-    emit_string(buf, "language", &circuit.language);
-    emit_string(buf, "corner", &circuit.corner);
-    emit_opt_string(buf, "parameters", &circuit.parameters);
-    emit_opt_string(buf, "ports", &circuit.ports);
-    let _ = writeln!(buf);
-}
-
-fn serialize_test_data(buf: &mut String, data: &IBIS_Test_Data) {
-    let _ = writeln!(buf, "[[Test_Data]]");
-    emit_string(buf, "test_data", &data.test_data);
-    emit_string(buf, "test_data_type", &data.test_data_type);
-    emit_string(buf, "driver_model", &data.driver_model);
-    emit_string(buf, "test_load", &data.test_load);
-    let _ = writeln!(buf);
-}
-
-fn serialize_test_load(buf: &mut String, load: &IBIS_Test_Load) {
-    let _ = writeln!(buf, "[[Test_Load]]");
-    emit_string(buf, "test_load", &load.test_load);
-    emit_string(buf, "test_load_type", &load.test_load_type);
-    emit_opt_quantity(buf, "c1_near", &load.c1_near);
-    emit_opt_quantity(buf, "rs_near", &load.rs_near);
-    emit_opt_quantity(buf, "ls_near", &load.ls_near);
-    emit_opt_quantity(buf, "c2_near", &load.c2_near);
-    emit_opt_quantity(buf, "rp1_near", &load.rp1_near);
-    emit_opt_quantity(buf, "td", &load.td);
-    emit_opt_quantity(buf, "zo", &load.zo);
-    emit_opt_quantity(buf, "rp1_far", &load.rp1_far);
-    emit_opt_quantity(buf, "c2_far", &load.c2_far);
-    emit_opt_quantity(buf, "ls_far", &load.ls_far);
-    emit_opt_quantity(buf, "rs_far", &load.rs_far);
-    emit_opt_quantity(buf, "c1_far", &load.c1_far);
-    emit_opt_string(buf, "receiver_model", &load.receiver_model);
-    let _ = writeln!(buf);
-}
-
-fn serialize_define_package_model(buf: &mut String, package: &IBIS_Define_Package_Model) {
-    let _ = writeln!(buf, "[[Define_Package_Model]]");
-    emit_string(buf, "define_package_model", &package.define_package_model);
-    emit_string(buf, "manufacturer", &package.manufacturer);
-    emit_string(buf, "oem", &package.oem);
-    emit_string(buf, "description", &package.description);
-    emit_string(buf, "number_of_sections", &package.number_of_sections);
-    emit_string(buf, "number_of_pins", &package.number_of_pins);
-    let _ = writeln!(buf);
-}
-
-fn serialize_interconnect_model_set(buf: &mut String, set: &IBIS_Interconnect_Model_Set) {
-    let _ = writeln!(buf, "[[Interconnect_Model_Set]]");
-    emit_string(buf, "interconnect_model_set", &set.interconnect_model_set);
-    emit_string(buf, "manufacturer", &set.manufacturer);
-    emit_string(buf, "description", &set.description);
-    for model in &set.interconnect_models {
-        let _ = writeln!(buf, "[[Interconnect_Model_Set.Interconnect_Model]]");
-        emit_string(buf, "interconnect_model", &model.interconnect_model);
-        emit_opt_string(buf, "file_ts", &model.file_ts);
-        emit_opt_string(buf, "file_ibis_iss", &model.file_ibis_iss);
-    }
-    let _ = writeln!(buf);
-}
-
-// -----------------------------------------------------------------------------
-// Entry point
-// -----------------------------------------------------------------------------
-
-/// Serialize the strongly-typed model [`IBIS_File`] into a TOML string
-/// (including `[[array-of-tables]]`).
-pub fn serialize_ibis_file(file: &IBIS_File) -> String {
-    let mut buf = String::new();
-
-    serialize_header(&mut buf, &file.header);
-
-    for component in &file.components {
-        serialize_component(&mut buf, component);
-    }
-    for selector in &file.model_selectors {
-        serialize_model_selector(&mut buf, selector);
-    }
-    for model in file.models.values() {
-        serialize_model(&mut buf, model);
-    }
-    for submodel in file.submodels.values() {
-        serialize_submodel(&mut buf, submodel);
-    }
-    for circuit in &file.external_circuits {
-        serialize_external_circuit(&mut buf, circuit);
-    }
-    for data in &file.test_data {
-        serialize_test_data(&mut buf, data);
-    }
-    for load in file.test_loads.values() {
-        serialize_test_load(&mut buf, load);
-    }
-    for package in file.package_models.values() {
-        serialize_define_package_model(&mut buf, package);
-    }
-    for set in &file.interconnect_model_sets {
-        serialize_interconnect_model_set(&mut buf, set);
-    }
-
-    buf
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::field_reassign_with_default)]
     use super::*;
-    use indexmap::IndexMap;
+    use crate::backend::Corner;
 
-    fn q(value: f64, unit: Option<&str>) -> Quantity {
-        Quantity { value: Scalar::Number(value), unit: unit.map(str::to_string) }
+    /// Builds a parsed field for tests.
+    fn field(key: &str, value: ParsedValue) -> ParsedField {
+        ParsedField { key: key.to_string(), value }
     }
 
-    /// 构造一个 corner 表（col_header = ["typ", "min", "max"]，单行）。
-    fn corner_table(cells: &[Quantity]) -> Table {
-        Table {
-            col_header: vec!["typ".into(), "min".into(), "max".into()],
-            matrix: vec![cells.iter().cloned().map(Cell::Quantity).collect()],
-        }
+    /// Builds a parsed node for tests.
+    fn node(
+        keyword: &str,
+        occurrence: Occurrence,
+        fields: Vec<ParsedField>,
+        children: Vec<ParsedNode>,
+    ) -> ParsedNode {
+        ParsedNode { keyword: keyword.to_string(), occurrence, fields, children }
     }
 
-    fn sample_file() -> IBIS_File {
-        let mut file = IBIS_File::default();
-        file.header.ibis_ver = "2.1".into();
-        file.header.file_name = "test.ibs".into();
-        file.header.file_rev = "1.0".into();
+    /// Parses the rendered document back to make sure it is valid TOML.
+    fn assert_valid_toml(document: &str) {
+        let parsed = toml::from_str::<toml::Value>(document);
+        assert!(parsed.is_ok(), "rendered document is not valid TOML: {parsed:?}\n{document}");
+    }
 
-        let mut component = IBIS_Component::default();
-        component.component = "STM32F103".into();
-        component.manufacturer = "STMicro".into();
-        component.package = Some(Component_Package {
-            r_pkg: corner_table(&[q(0.1, Some("ohm")), q(0.09, Some("ohm")), q(0.11, Some("ohm"))]),
-            l_pkg: corner_table(&[q(1.0, Some("nH"))]),
-            c_pkg: Table::default(),
-        });
-        component.pin = Some(Component_Pin {
-            pin: Table {
-                col_header: vec![
-                    "signal_name".into(),
-                    "model_name".into(),
-                    "R_pin".into(),
-                    "L_pin".into(),
-                    "C_pin".into(),
-                ],
-                matrix: vec![vec![
-                    Cell::Text("PC13".into()),
-                    Cell::Text("M1".into()),
-                    Cell::Quantity(q(0.5, Some("p"))),
-                ]],
-            },
-        });
-        file.components.push(component);
-
-        let mut model = IBIS_Model::default();
-        model.model = "M1".into();
-        model.model_type = "I/O".into();
-        model.c_comp = Some(corner_table(&[q(1.12, Some("p")), q(0.79, Some("p")), q(1.15, Some("p"))]));
-        model.voltage_range = Some(corner_table(&[q(3.3, Some("V")), q(2.0, Some("V")), q(3.6, Some("V"))]));
-        model.pulldown = Some(Table {
-            col_header: vec!["voltage".into(), "i_typ".into(), "i_min".into(), "i_max".into()],
-            matrix: vec![
-                vec![Cell::Quantity(q(-3.3, None)), Cell::Quantity(q(-2.0, Some("mA"))), Cell::Quantity(q(-2.0, Some("mA"))), Cell::Quantity(q(-1.0, Some("mA")))],
-                vec![Cell::Quantity(q(0.0, None)), Cell::Quantity(q(0.0, Some("mA"))), Cell::Quantity(q(0.0, Some("mA"))), Cell::Quantity(q(0.0, Some("mA")))],
+    #[test]
+    fn test_renders_file_header_entries_as_flat_fields() {
+        let header = node(
+            "File_Header",
+            Occurrence::Once,
+            Vec::new(),
+            vec![
+                node(
+                    "IBIS_Ver",
+                    Occurrence::Once,
+                    vec![field("ibis_ver", ParsedValue::Text("2.1".into()))],
+                    Vec::new(),
+                ),
+                node(
+                    "Notes",
+                    Occurrence::Once,
+                    vec![field(
+                        "notes",
+                        ParsedValue::Lines(vec!["first line".into(), "second line".into()]),
+                    )],
+                    Vec::new(),
+                ),
             ],
-        });
-        let mut models = IndexMap::new();
-        models.insert("M1".into(), model);
-        file.models = models;
+        );
 
-        file
+        let document = serialize_parsed_tree(&[header]);
+
+        assert!(document.starts_with("[File_Header]\n"), "{document}");
+        assert!(document.contains("ibis_ver = \"2.1\""), "{document}");
+        assert!(document.contains("notes = \"\"\"\nfirst line\nsecond line\n\"\"\""), "{document}");
+        assert_valid_toml(&document);
     }
 
     #[test]
-    fn test_serialize_header_and_quantity_fields() {
-        let output = serialize_ibis_file(&sample_file());
-        assert!(output.contains("[File_Header]"));
-        assert!(output.contains("ibis_ver = \"2.1\""));
-        assert!(output.contains("[[Component]]"));
-        assert!(output.contains("r_pkg = { col_header = [\"typ\", \"min\", \"max\"], data = [\"0.1ohm\", \"0.09ohm\", \"0.11ohm\"] }"));
-        assert!(output.contains("[Component.Pin]"));
-        assert!(output.contains("Pin = { col_header = [\"signal_name\", \"model_name\", \"R_pin\", \"L_pin\", \"C_pin\"], data = ["));
-        assert!(output.contains("[\"PC13\", \"M1\", \"0.5p\"]"));
+    fn test_renders_sections_as_tables_and_arrays_of_tables() {
+        let component = node(
+            "Component",
+            Occurrence::Multiple,
+            vec![field("component", ParsedValue::Text("MyChip".into()))],
+            vec![
+                node(
+                    "Package",
+                    Occurrence::Once,
+                    vec![field(
+                        "r_pkg",
+                        ParsedValue::Corner(Corner("250.0m".into(), "225.0m".into(), "275.0m".into())),
+                    )],
+                    Vec::new(),
+                ),
+                node(
+                    "Pin",
+                    Occurrence::Once,
+                    vec![field(
+                        "pin",
+                        ParsedValue::Table(ParsedTable {
+                            header: vec!["signal_name".into(), "model_name".into()],
+                            data: vec![vec!["PA0".into(), "IO8TC".into()]],
+                        }),
+                    )],
+                    Vec::new(),
+                ),
+            ],
+        );
+
+        let document = serialize_parsed_tree(&[component]);
+
+        assert!(document.contains("[[Component]]"), "{document}");
+        assert!(document.contains("component = \"MyChip\""), "{document}");
+        assert!(document.contains("[Component.Package]"), "{document}");
+        assert!(
+            document.contains(
+                "r_pkg = { header = [\"typ\", \"min\", \"max\"], data = [\"250.0m\", \"225.0m\", \"275.0m\"] }"
+            ),
+            "{document}"
+        );
+        assert!(document.contains("[Component.Pin]"), "{document}");
+        assert!(
+            document.contains("pin = { header = [\"signal_name\", \"model_name\"], data = ["),
+            "{document}"
+        );
+        assert!(document.contains("[\"PA0\", \"IO8TC\"],"), "{document}");
+        assert_valid_toml(&document);
     }
 
     #[test]
-    fn test_serialize_table_matrix() {
-        let output = serialize_ibis_file(&sample_file());
-        assert!(output.contains("pulldown = {"));
-        assert!(output.contains("col_header = [\"voltage\", \"i_typ\", \"i_min\", \"i_max\"]"));
-        assert!(output.contains("[\"-3.3\", \"-2mA\", \"-2mA\", \"-1mA\"]"));
+    fn test_repeated_keyword_without_schema_occurrence_still_becomes_an_array() {
+        let first = node(
+            "Manufacturer",
+            Occurrence::Once,
+            vec![field("manufacturer", ParsedValue::Text("Acme".into()))],
+            Vec::new(),
+        );
+        let second = node(
+            "Manufacturer",
+            Occurrence::Once,
+            vec![field("manufacturer", ParsedValue::Text("Bravo".into()))],
+            Vec::new(),
+        );
+
+        let document = serialize_parsed_tree(&[first, second]);
+
+        assert_eq!(document.matches("[[Manufacturer]]").count(), 2, "{document}");
+        assert_valid_toml(&document);
     }
 
     #[test]
-    fn test_serialize_corner_and_range() {
-        let output = serialize_ibis_file(&sample_file());
-        assert!(output.contains("voltage_range = { col_header = [\"typ\", \"min\", \"max\"], data = [\"3.3V\", \"2V\", \"3.6V\"] }"));
-        assert!(output.contains("c_comp = { col_header = [\"typ\", \"min\", \"max\"], data = [\"1.12p\", \"0.79p\", \"1.15p\"] }"));
+    fn test_symbolic_keys_are_quoted_with_the_schema_spelling() {
+        let ramp = node(
+            "Ramp",
+            Occurrence::Once,
+            vec![
+                field(
+                    "dv/dt_r",
+                    ParsedValue::Corner(Corner("1.9".into(), "1.1".into(), "2.0".into())),
+                ),
+                field("vinh+", ParsedValue::Text("3.3".into())),
+                field("r_load", ParsedValue::Text("1k".into())),
+            ],
+            Vec::new(),
+        );
+
+        let document = serialize_parsed_tree(&[ramp]);
+
+        assert!(
+            document.contains(
+                "\"dv/dt_r\" = { header = [\"typ\", \"min\", \"max\"], data = [\"1.9\", \"1.1\", \"2.0\"] }"
+            ),
+            "{document}"
+        );
+        assert!(document.contains("\"vinh+\" = \"3.3\""), "{document}");
+        assert!(document.contains("r_load = \"1k\""), "{document}");
+        assert_valid_toml(&document);
     }
 
     #[test]
-    fn test_option_none_is_omitted() {
-        let output = serialize_ibis_file(&sample_file());
-        assert!(!output.contains("l_pin ="), "l_pin (None) should be omitted");
+    fn test_empty_table_keeps_a_plain_header() {
+        let section = node("Node_Declarations", Occurrence::Once, Vec::new(), Vec::new());
+
+        let document = serialize_parsed_tree(&[section]);
+
+        assert_eq!(document.trim(), "[Node_Declarations]");
+        assert_valid_toml(&document);
+    }
+
+    #[test]
+    fn test_lines_become_a_multi_line_string_with_the_closing_delimiter_below() {
+        let notes = node(
+            "Notes",
+            Occurrence::Once,
+            vec![field(
+                "notes",
+                ParsedValue::Lines(vec!["he said \"hi\"".into(), "path C:\\tmp".into()]),
+            )],
+            Vec::new(),
+        );
+
+        let document = serialize_parsed_tree(&[notes]);
+
+        // The closing `"""` owns its line instead of trailing the last text line.
+        assert_eq!(
+            document.trim(),
+            "[Notes]\nnotes = \"\"\"\nhe said \\\"hi\\\"\npath C:\\\\tmp\n\"\"\""
+        );
+        assert_valid_toml(&document);
+
+        let reparsed: toml::Value = toml::from_str(&document).expect("valid TOML");
+        let value = reparsed.get("Notes").and_then(|table| table.get("notes"));
+        assert_eq!(
+            value.and_then(|value| value.as_str()),
+            Some("he said \"hi\"\npath C:\\tmp\n")
+        );
+    }
+
+    #[test]
+    fn test_a_single_line_stays_a_plain_string() {
+        let source = node(
+            "Source",
+            Occurrence::Once,
+            vec![field("source", ParsedValue::Lines(vec!["Acme Corp".into()]))],
+            Vec::new(),
+        );
+
+        let document = serialize_parsed_tree(&[source]);
+
+        assert_eq!(document.trim(), "[Source]\nsource = \"Acme Corp\"");
+        assert_valid_toml(&document);
     }
 }

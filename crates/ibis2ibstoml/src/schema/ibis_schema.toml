@@ -1,588 +1,825 @@
 # =============================================================================
 # ibis_schema.toml — IBIS 7.0 结构（唯一 IBIS 结构数据源）
 #
-# 核心约定：
-#   - 每个 keyword 下都有同名 section（哪怕它是空的）；
-#   - `[]` 内节段名按 IBIS 手册写法（如 [Component.Pin]、[Model.Ramp]）；
-#   - 第一个字段名 = keyword 名本身（全小写）；
-#   - 字段的 **类型 / 规范名** 由 `schema/keyword_hierarchy.rs` 的结构体字段定义
-#     （单一来源），本文件字段名（key）与属性值均**全小写**，与结构体字段对齐。
+# 组织约定：
+#   - 每个 keyword 一个同名 section（`[X]` 单实例 / `[[X]]` 多实例）；
+#   - 子 keyword 写作父节段的子表（如 `[Component.Pin]`、`[Model.Ramp]`）；
+#   - 每个 section 均含三个元数据键，描述该 keyword 的结构：
 #
-# 格式（与 plans/ibis_struct.toml 一致）：
-#   [Section]       单实例 keyword 的同名 section（TOML 单表）
-#   [[Section]]     多实例 keyword 的同名 section（TOML 数组表）
-#   key = "spec_name"   字段名 = 全小写属性值
+#       __schema__ = {required = <bool>, format = "<kind>"}
+#           required — 该 keyword 是否必须出现；
+#           format   — 该 keyword 下 header / param / 文本体如何组织：
+#                      "file_header" 文件头条目
+#                      "text"        单条记录（标识符可入 header，其余入 param）
+#                      "textlines"   多行自由文本
+#                      "table"       表格或列表（行式数据）
+#                      "IV-table"    I-V 曲线表；列名固定为 Voltage / I(typ) / I(min) / I(max)
+#                      "VT-table"    V-t 波形表；fixture param 照常解析，其余行成表，
+#                                    列名固定为 Time / V(typ) / V(min) / V(max)
 #
-# 用途：backend 结构校验（keyword_valid）、symbol_table_build 的通用递归解释器
-#       （节段 / 字段 / 树关系）、frontend pest 生成、示例模板
+#       __header__ = {format = "<kind>"}
+#           keyword 之后同一行紧跟的文字如何组织：
+#                      "none"         关键字后无文字
+#                      "text"         一个文本 / 标识符 token
+#                      "textlines"    多行自由文本
+#                      "table_header" 表头行（列名）
+#                      "corner"       一个 corner 三元组（typ min max）
+#
+#       __param__ = "none" | { name = "<type>", ... } | [X.__param__]
+#           该 keyword 携带的具名 sub-parameter；条目较多时另起
+#           `[X.__param__]` 子表。type ∈ {text, quantity, corner}：
+#                      text     文本 / 枚举 / 名称
+#                      quantity 带单位的物理量（数值 + 单位）
+#                      corner   角点三元组（typ min max）
+#
+# 行式 section 的首列：IBIS 手册的表头行常常不给第一列命名（数据的首列是
+# pin_name / pad_name / 域名等标识符），例如
+#
+#     [Pin] signal_name model_name R_pin L_pin C_pin
+#     1     RAS0#       Buffer1    200.0m 5.0nH 2.0pF
+#
+# 数据行比表头多出一列。此类「手册未命名」的首列统一记为 `col0`，并声明为
+# `__param__` 的第一项，使列名与数据列一一对齐；手册确实给出名字的首列
+# （如 [Series Switch Groups] 的 On/Off、[Add Submodel] 的 submodel_name）沿用原名。
+#
+# 用途：backend 结构校验、symbol_table_build 通用递归解释器、frontend pest
+#       生成、示例模板。
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# 文件头（虚拟容器，其字段名即 keyword 名）
+# File Header
 # -----------------------------------------------------------------------------
-[File_Header]
-"ibis_ver" = "ibis_ver"
-"comment_char" = "comment_char"
-"file_name" = "file_name"
-"file_rev" = "file_rev"
-"date" = "date"
-"source" = "source"
-"notes" = "notes"
-"disclaimer" = "disclaimer"
-"copyright" = "copyright"
+[IBIS_Ver]
+__schema__ = {required = true, format = "file_header"}
+__header__ = {format = "text"}
+__param__  = "none"
+
+[Comment_Char]
+__schema__ = {required = false, format = "file_header"}
+__header__ = {format = "text"}
+__param__  = "none"
+
+[File_Name]
+__schema__ = {required = true, format = "file_header"}
+__header__ = {format = "text"}
+__param__  = "none"
+
+[File_Rev]
+__schema__ = {required = true, format = "file_header"}
+__header__ = {format = "text"}
+__param__  = "none"
+
+[Date]
+__schema__ = {required = false, format = "file_header"}
+__header__ = {format = "text"}
+__param__  = "none"
+
+[Source]
+__schema__ = {required = false, format = "file_header"}
+__header__ = {format = "textlines"}
+__param__  = "none"
+
+[Notes]
+__schema__ = {required = false, format = "file_header"}
+__header__ = {format = "textlines"}
+__param__  = "none"
+
+[Disclaimer]
+__schema__ = {required = false, format = "file_header"}
+__header__ = {format = "textlines"}
+__param__  = "none"
+
+[Copyright]
+__schema__ = {required = false, format = "file_header"}
+__header__ = {format = "text"}
+__param__  = "none"
+
 
 # -----------------------------------------------------------------------------
 # Component
 # -----------------------------------------------------------------------------
 [[Component]]
-"component" = "component_name"            # 组件名
-"si_location" = "si_location"
-"timing_location" = "timing_location"
+__schema__ = {required = true, format = "text"}
+__header__ = {format = "text"}
+__param__  = {si_location = "text", timing_location = "text"}
 
-    # [Manufacturer] 的同名 section
     [Component.Manufacturer]
-    "manufacturer" = "manufacturer"
+    __schema__ = {required = true, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = "none"
 
-    # [Package] 的同名 section（空类型：无标识符）
     [Component.Package]
-    "package" = "package"
-    "r_pkg" = "r_pkg"
-    "l_pkg" = "l_pkg"
-    "c_pkg" = "c_pkg"
+    __schema__ = {required = true, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = {r_pkg = "corner", l_pkg = "corner", c_pkg = "corner"}
 
-    # [Pin] 的同名 section（内部仅一个 `pin` 字段，其类型为 table）
     [Component.Pin]
-    "pin" = "table"
+    __schema__ = {required = true, format = "table"}
+    __header__ = {format = "table_header"}
+        [Component.Pin.__param__]
+        col0 = "text"
+        signal_name = "text"
+        model_name = "text"
+        R_pin = "quantity"
+        L_pin = "quantity"
+        C_pin = "quantity"
 
-    # [Pin Mapping] 的同名 section（行式表）
-    [[Component.Pin_Mapping]]
-    "pin_mapping" = "pin_mapping"
-    "pulldown_ref" = "pulldown_ref"
-    "pullup_ref" = "pullup_ref"
-    "gnd_clamp_ref" = "gnd_clamp_ref"
-    "power_clamp_ref" = "power_clamp_ref"
-    "ext_ref" = "ext_ref"
-
-    # [Package Model] 的同名 section（含 Alternate Package Models）
     [Component.Package_Model]
-    "package_model" = "package_model"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "text"}
+    __param__  = "none"
+
         [Component.Package_Model.Alternate_Package_Models]
-        "alternate_package_models" = "alternate_package_models"
+        __schema__ = {required = false, format = "table"}
+        __header__ = {format = "none"}
+        __param__  = "none"
 
-    # [Interconnect Model Group]（多实例行式表）
     [[Component.Interconnect_Model_Group]]
-    "interconnect_model_group" = "interconnect_model_group"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "text"}
+    __param__  = "none"
 
-    # [Series Pin Mapping]（多实例行式表）
+    [[Component.Pin_Mapping]]
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+
+        [Component.Pin_Mapping.__param__]
+        col0 = "text"
+        pulldown_ref = "text"
+        pullup_ref = "text"
+        gnd_clamp_ref = "text"
+        power_clamp_ref = "text"
+        ext_ref = "text"
+
     [[Component.Series_Pin_Mapping]]
-    "series_pin_mapping" = "series_pin_mapping"
-    "pin_1" = "pin_1"
-    "pin_2" = "pin_2"
-    "model_name" = "model_name"
-    "function_table_group" = "function_table_group"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
 
-    # [Diff Pin]（多实例行式表）
+        [Component.Series_Pin_Mapping.__param__]
+        col0 = "text"
+        pin_2 = "text"
+        model_name = "text"
+        function_table_group = "text"
+
     [[Component.Diff_Pin]]
-    "diff_pin" = "diff_pin"
-    "inv_pin" = "inv_pin"
-    "vdiff" = "vdiff"
-    "tdelay_typ" = "tdelay_typ"
-    "tdelay_min" = "tdelay_min"
-    "tdelay_max" = "tdelay_max"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
 
-    # [Differential Pin Mapping]（多实例行式表）
+        [Component.Diff_Pin.__param__]
+        col0 = "text"
+        inv_pin = "text"
+        vdiff = "quantity"
+        tdelay_typ = "quantity"
+        tdelay_min = "quantity"
+        tdelay_max = "quantity"
+
     [[Component.Differential_Pin_Mapping]]
-    "differential_pin_mapping" = "differential_pin_mapping"
-    "inv_pin" = "inv_pin"
-    "vdiff" = "vdiff"
-    "tdelay_typ" = "tdelay_typ"
-    "tdelay_min" = "tdelay_min"
-    "tdelay_max" = "tdelay_max"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
 
-    # [Bus Label]（多实例行式表）
+        [Component.Differential_Pin_Mapping.__param__]
+        inv_pin = "text"
+        vdiff = "quantity"
+        tdelay_typ = "quantity"
+        tdelay_min = "quantity"
+        tdelay_max = "quantity"
+
     [[Component.Bus_Label]]
-    "bus_label" = "bus_label"
-    "signal_name" = "signal_name"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+    __param__  = {col0 = "text", signal_name = "text"}
 
-    # [Die Supply Pads]（多实例行式表）
     [[Component.Die_Supply_Pads]]
-    "die_supply_pads" = "die_supply_pads"
-    "signal_name" = "signal_name"
-    "bus_label" = "bus_label"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+    __param__  = {col0 = "text", signal_name = "text", bus_label = "text"}
 
-    # [Repeater Pin]（多实例行式表）
     [[Component.Repeater_Pin]]
-    "repeater_pin" = "repeater_pin"
-    "tx_non_inv_pin" = "tx_non_inv_pin"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+    __param__  = {col0 = "text", tx_non_inv_pin = "text"}
 
-    # [Series Switch Groups]（多实例行式表）
     [[Component.Series_Switch_Groups]]
-    "series_switch_groups" = "series_switch_groups"
-    "on" = "on"
-    "off" = "off"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+    __param__  = {on = "text", off = "text"}
 
-    # [Node Declarations] 的同名 section（空类型：content 为多行文本）
     [Component.Node_Declarations]
-    "node_declarations" = "node_declarations"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "none"}
+    __param__  = "none"
 
-    # [Circuit Call]（多实例行式表）
     [[Component.Circuit_Call]]
-    "circuit_call" = "circuit_call"
-    "signal_pin" = "signal_pin"
-    "diff_signal_pins" = "diff_signal_pins"
-    "series_pins" = "series_pins"
-    "port_map" = "port_map"
-    "converter_parameters" = "converter_parameters"
-    "parameters" = "parameters"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
 
-    # [Begin EMI Component] 的同名 section（空类型：含 Pin EMI / Pin Domain EMI）
+        [Component.Circuit_Call.__param__]
+        signal_pin = "text"
+        diff_signal_pins = "text"
+        series_pins = "text"
+        port_map = "text"
+        converter_parameters = "text"
+        parameters = "text"
+
     [Component.Begin_EMI_Component]
-    "begin_emi_component" = "begin_emi_component"
-    "domain" = "domain"
-    "cpd" = "cpd"
-    "c_heatsink_gnd" = "c_heatsink_gnd"
-    "c_heatsink_float" = "c_heatsink_float"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "text"}
+    __param__  = {cpd = "quantity", c_heatsink_gnd = "quantity", c_heatsink_float = "quantity"}
+
         [[Component.Begin_EMI_Component.Pin_EMI]]
-        "pin_emi" = "pin_emi"
-        "domain_name" = "domain_name"
-        "clock_div" = "clock_div"
+        __schema__ = {required = false, format = "table"}
+        __header__ = {format = "table_header"}
+        # 手册：「Each line must contain three columns. The first column shall
+        # contain the pin name.」——首列是引脚名，表头行（domain_name clock_div）
+        # 只命名了后两列。
+        __param__  = {col0 = "text", domain_name = "text", clock_div = "text"}
+
         [[Component.Begin_EMI_Component.Pin_Domain_EMI]]
-        "pin_domain_emi" = "pin_domain_emi"
-        "percentage" = "percentage"
+        __schema__ = {required = false, format = "table"}
+        __header__ = {format = "table_header"}
+        # 手册：「The first column must contain the domain_name.」——首列是域名，
+        # 表头行（percentage）只命名了百分比列。
+        __param__  = {col0 = "text", percentage = "quantity"}
 
 # -----------------------------------------------------------------------------
 # Model Selector
 # -----------------------------------------------------------------------------
 [[Model_Selector]]
-"model_selector" = "model_selector"       # 选择器名
-# 后续行 = 模型列表
+__schema__ = {required = false, format = "table"}
+__header__ = {format = "text"}
+__param__  = "none"
 
 # -----------------------------------------------------------------------------
 # Model
 # -----------------------------------------------------------------------------
 [[Model]]
-"model" = "model_name"                    # 模型名（符号表 key）
-"model_type" = "model_type"
-"polarity" = "polarity"
-"enable" = "enable"
-"vinl" = "vinl"
-"vinh" = "vinh"
-"c_comp" = "c_comp"
-"c_comp_pullup" = "c_comp_pullup"
-"c_comp_pulldown" = "c_comp_pulldown"
-"c_comp_power_clamp" = "c_comp_power_clamp"
-"c_comp_gnd_clamp" = "c_comp_gnd_clamp"
-"vmeas" = "vmeas"
-"cref" = "cref"
-"rref" = "rref"
-"vref" = "vref"
-"rref_diff" = "rref_diff"
-"cref_diff" = "cref_diff"
-"ttgnd" = "ttgnd"
-"ttpower" = "ttpower"
-"rgnd" = "rgnd"
-"rpower" = "rpower"
-"rac" = "rac"
-"cac" = "cac"
-"on" = "on"
-"off" = "off"
-"r_series" = "r_series"
-"l_series" = "l_series"
-"rl_series" = "rl_series"
-"c_series" = "c_series"
-"lc_series" = "lc_series"
-"rc_series" = "rc_series"
-"vds" = "vds"
-"add_submodel" = "add_submodel"
-"driver_schedule" = "driver_schedule"
-"threshold_sensitivity" = "threshold_sensitivity"
-"reference_supply" = "reference_supply"
+__schema__ = {required = false, format = "text"}
+__header__ = {format = "text"}
 
-    # [Model Spec] 的同名 section（空类型）
+    [Model.__param__]
+    model_type = "text"
+    polarity = "text"
+    enable = "text"
+    vinl = "quantity"
+    vinh = "quantity"
+    c_comp = "corner"
+    c_comp_pullup = "corner"
+    c_comp_pulldown = "corner"
+    c_comp_power_clamp = "corner"
+    c_comp_gnd_clamp = "corner"
+    vmeas = "quantity"
+    cref = "quantity"
+    rref = "quantity"
+    vref = "quantity"
+    rref_diff = "quantity"
+    cref_diff = "quantity"
+    ttgnd = "quantity"
+    ttpower = "quantity"
+    rgnd = "quantity"
+    rpower = "quantity"
+    rac = "quantity"
+    cac = "quantity"
+    on = "quantity"
+    off = "quantity"
+    r_series = "quantity"
+    l_series = "quantity"
+    rl_series = "quantity"
+    c_series = "quantity"
+    lc_series = "quantity"
+    rc_series = "quantity"
+    vds = "quantity"
+    driver_schedule = "text"
+    threshold_sensitivity = "text"
+    reference_supply = "text"
+
     [Model.Model_Spec]
-    "model_spec" = "model_spec"
-    "vinh" = "vinh"
-    "vinl" = "vinl"
-    "vinh+" = "vinh+"
-    "vinh-" = "vinh-"
-    "vinl+" = "vinl+"
-    "vinl-" = "vinl-"
-    "s_overshoot_high" = "s_overshoot_high"
-    "s_overshoot_low" = "s_overshoot_low"
-    "d_overshoot_high" = "d_overshoot_high"
-    "d_overshoot_low" = "d_overshoot_low"
-    "d_overshoot_time" = "d_overshoot_time"
-    "d_overshoot_area_h" = "d_overshoot_area_h"
-    "d_overshoot_area_l" = "d_overshoot_area_l"
-    "d_overshoot_ampl_h" = "d_overshoot_ampl_h"
-    "d_overshoot_ampl_l" = "d_overshoot_ampl_l"
-    "pulse_high" = "pulse_high"
-    "pulse_low" = "pulse_low"
-    "pulse_time" = "pulse_time"
-    "weak_r" = "weak_r"
-    "weak_i" = "weak_i"
-    "weak_v" = "weak_v"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
 
-    # [Receiver Thresholds] 的同名 section（空类型）
+        # [Model Spec] 的参数清单与顺序取自 IBIS 7.0 手册，
+        # 全部为角点三元组（typ min max）。
+        [Model.Model_Spec.__param__]
+        vinh = "corner"
+        vinl = "corner"
+        "vinh+" = "corner"
+        "vinh-" = "corner"
+        "vinl+" = "corner"
+        "vinl-" = "corner"
+        s_overshoot_high = "corner"
+        s_overshoot_low = "corner"
+        d_overshoot_high = "corner"
+        d_overshoot_low = "corner"
+        d_overshoot_time = "corner"
+        d_overshoot_area_h = "corner"
+        d_overshoot_area_l = "corner"
+        d_overshoot_ampl_h = "corner"
+        d_overshoot_ampl_l = "corner"
+        pulse_high = "corner"
+        pulse_low = "corner"
+        pulse_time = "corner"
+        vmeas = "corner"
+        cref = "corner"
+        rref = "corner"
+        vref = "corner"
+        cref_rising = "corner"
+        cref_falling = "corner"
+        rref_rising = "corner"
+        rref_falling = "corner"
+        vref_rising = "corner"
+        vref_falling = "corner"
+        vmeas_rising = "corner"
+        vmeas_falling = "corner"
+        rref_diff = "corner"
+        cref_diff = "corner"
+        weak_r = "corner"
+        weak_i = "corner"
+        weak_v = "corner"
+
     [Model.Receiver_Thresholds]
-    "receiver_thresholds" = "receiver_thresholds"
-    "vth" = "vth"
-    "vth_min" = "vth_min"
-    "vth_max" = "vth_max"
-    "vinh_ac" = "vinh_ac"
-    "vinh_dc" = "vinh_dc"
-    "vinl_ac" = "vinl_ac"
-    "vinl_dc" = "vinl_dc"
-    "threshold_sensitivity" = "threshold_sensitivity"
-    "reference_supply" = "reference_supply"
-    "vcross_low" = "vcross_low"
-    "vcross_high" = "vcross_high"
-    "vdiff_ac" = "vdiff_ac"
-    "vdiff_dc" = "vdiff_dc"
-    "tslew_ac" = "tslew_ac"
-    "tdiffslew_ac" = "tdiffslew_ac"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
 
-    # [C Comp Corner] 的同名 section（空类型）
+        [Model.Receiver_Thresholds.__param__]
+        vth = "quantity"
+        vth_min = "quantity"
+        vth_max = "quantity"
+        vinh_ac = "quantity"
+        vinh_dc = "quantity"
+        vinl_ac = "quantity"
+        vinl_dc = "quantity"
+        threshold_sensitivity = "text"
+        reference_supply = "text"
+        vcross_low = "quantity"
+        vcross_high = "quantity"
+        vdiff_ac = "quantity"
+        vdiff_dc = "quantity"
+        tslew_ac = "quantity"
+        tdiffslew_ac = "quantity"
+
     [Model.C_Comp_Corner]
-    "c_comp_corner" = "c_comp_corner"
-    "c_comp" = "c_comp"
-    "c_comp_pullup" = "c_comp_pullup"
-    "c_comp_pulldown" = "c_comp_pulldown"
-    "c_comp_power_clamp" = "c_comp_power_clamp"
-    "c_comp_gnd_clamp" = "c_comp_gnd_clamp"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
 
-    # [Temperature Range] / [Voltage Range] / [* Reference]（空类型：content 即三元组）
+        [Model.C_Comp_Corner.__param__]
+        c_comp = "corner"
+        c_comp_pullup = "corner"
+        c_comp_pulldown = "corner"
+        c_comp_power_clamp = "corner"
+        c_comp_gnd_clamp = "corner"
+
     [Model.Temperature_Range]
-    "temperature_range" = "temperature_range"
-    "value" = "temperature_range_value"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "corner"}
+    __param__  = "none"
+
     [Model.Voltage_Range]
-    "voltage_range" = "voltage_range"
-    "value" = "voltage_range_value"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "corner"}
+    __param__  = "none"
+
     [Model.Pullup_Reference]
-    "pullup_reference" = "pullup_reference"
-    "value" = "pullup_reference_value"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "corner"}
+    __param__  = "none"
+
     [Model.Pulldown_Reference]
-    "pulldown_reference" = "pulldown_reference"
-    "value" = "pulldown_reference_value"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "corner"}
+    __param__  = "none"
+
     [Model.Power_Clamp_Reference]
-    "power_clamp_reference" = "power_clamp_reference"
-    "value" = "power_clamp_reference_value"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "corner"}
+    __param__  = "none"
+
     [Model.GND_Clamp_Reference]
-    "gnd_clamp_reference" = "gnd_clamp_reference"
-    "value" = "gnd_clamp_reference_value"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "corner"}
+    __param__  = "none"
+
     [Model.External_Reference]
-    "external_reference" = "external_reference"
-    "value" = "external_reference_value"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "corner"}
+    __param__  = "none"
 
-    # [Ramp] 的同名 section（空类型）
     [Model.Ramp]
-    "ramp" = "ramp"
-    "dv/dt_r" = "dv/dt_r"
-    "dv/dt_f" = "dv/dt_f"
-    "r_load" = "r_load"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = {"dv/dt_r" = "corner", "dv/dt_f" = "corner", r_load = "quantity"}
 
-    # I-V 曲线表（空类型：content 为表数据）
     [Model.Pulldown]
-    "pulldown" = "pulldown"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Model.Pullup]
-    "pullup" = "pullup"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Model.GND_Clamp]
-    "gnd_clamp" = "gnd_clamp"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Model.Power_Clamp]
-    "power_clamp" = "power_clamp"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Model.POWER_Table]
-    "power_table" = "power_table"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Model.GND_Table]
-    "gnd_table" = "gnd_table"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Model.Series_Current]
-    "series_current" = "series_current"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
 
-    # [Rising Waveform] / [Falling Waveform]（多实例，空类型）
+    [Model.Add_Submodel]
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+    __param__  = {submodel_name = "text", mode = "text"}
+
     [[Model.Rising_Waveform]]
-    "rising_waveform" = "rising_waveform"
-    "r_fixture" = "r_fixture"
-    "v_fixture" = "v_fixture"
-    "v_fixture_min" = "v_fixture_min"
-    "v_fixture_max" = "v_fixture_max"
-    "c_fixture" = "c_fixture"
-    "l_fixture" = "l_fixture"
-    "r_dut" = "r_dut"
-    "l_dut" = "l_dut"
-    "c_dut" = "c_dut"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "none"}
+
+        [Model.Rising_Waveform.__param__]
+        r_fixture = "quantity"
+        v_fixture = "quantity"
+        v_fixture_min = "quantity"
+        v_fixture_max = "quantity"
+        c_fixture = "quantity"
+        l_fixture = "quantity"
+        r_dut = "quantity"
+        l_dut = "quantity"
+        c_dut = "quantity"
+
         [Model.Rising_Waveform.Composite_Current]
-        "composite_current" = "composite_current"
-        "data" = "i-v_data"
+        __schema__ = {required = false, format = "IV-table"}
+        __header__ = {format = "table_header"}
+        __param__  = "none"
+
     [[Model.Falling_Waveform]]
-    "falling_waveform" = "falling_waveform"
-    "r_fixture" = "r_fixture"
-    "v_fixture" = "v_fixture"
-    "v_fixture_min" = "v_fixture_min"
-    "v_fixture_max" = "v_fixture_max"
-    "c_fixture" = "c_fixture"
-    "l_fixture" = "l_fixture"
-    "r_dut" = "r_dut"
-    "l_dut" = "l_dut"
-    "c_dut" = "c_dut"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "none"}
+
+        [Model.Falling_Waveform.__param__]
+        r_fixture = "quantity"
+        v_fixture = "quantity"
+        v_fixture_min = "quantity"
+        v_fixture_max = "quantity"
+        c_fixture = "quantity"
+        l_fixture = "quantity"
+        r_dut = "quantity"
+        l_dut = "quantity"
+        c_dut = "quantity"
+
         [Model.Falling_Waveform.Composite_Current]
-        "composite_current" = "composite_current"
-        "data" = "i-v_data"
+        __schema__ = {required = false, format = "IV-table"}
+        __header__ = {format = "table_header"}
+        __param__  = "none"
 
-    # [External Model] 的同名 section（空类型）
     [Model.External_Model]
-    "external_model" = "external_model"
-    "language" = "language"
-    "corner" = "corner"
-    "parameters" = "parameters"
-    "converter_parameters" = "converter_parameters"
-    "ports" = "ports"
-    "d_to_a" = "d_to_a"
-    "a_to_d" = "a_to_d"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
 
-    # [Algorithmic Model] 的同名 section（空类型）
+        [Model.External_Model.__param__]
+        language = "text"
+        corner = "text"
+        parameters = "text"
+        converter_parameters = "text"
+        ports = "text"
+        d_to_a = "text"
+        a_to_d = "text"
+
     [Model.Algorithmic_Model]
-    "algorithmic_model" = "algorithmic_model"
-    "executable" = "executable"
-    "executable_rx" = "executable_rx"
-    "executable_tx" = "executable_tx"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = {executable = "text", executable_rx = "text", executable_tx = "text"}
 
-    # [Begin EMI Model] 的同名 section（空类型）
     [Model.Begin_EMI_Model]
-    "begin_emi_model" = "begin_emi_model"
-    "model_emi_type" = "model_emi_type"
-    "model_domain" = "model_domain"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = {model_emi_type = "text", model_domain = "text"}
 
 # -----------------------------------------------------------------------------
 # Submodel
 # -----------------------------------------------------------------------------
 [[Submodel]]
-"submodel" = "submodel_name"              # 子模型名
-"submodel_type" = "submodel_type"
+__schema__ = {required = false, format = "text"}
+__header__ = {format = "text"}
+__param__  = {submodel_type = "text"}
 
-    # [Submodel Spec] 的同名 section（空类型）
     [Submodel.Submodel_Spec]
-    "submodel_spec" = "submodel_spec"
-    "v_trigger_r" = "v_trigger_r"
-    "v_trigger_f" = "v_trigger_f"
-    "off_delay" = "off_delay"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = {v_trigger_r = "quantity", v_trigger_f = "quantity", off_delay = "quantity"}
 
     [Submodel.Power_Pulse_Table]
-    "power_pulse_table" = "power_pulse_table"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Submodel.GND_Pulse_Table]
-    "gnd_pulse_table" = "gnd_pulse_table"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Submodel.Pulldown]
-    "pulldown" = "pulldown"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Submodel.Pullup]
-    "pullup" = "pullup"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Submodel.GND_Clamp]
-    "gnd_clamp" = "gnd_clamp"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Submodel.Power_Clamp]
-    "power_clamp" = "power_clamp"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Submodel.Ramp]
-    "ramp" = "ramp"
-    "dv/dt_r" = "dv/dt_r"
-    "dv/dt_f" = "dv/dt_f"
-    "r_load" = "r_load"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = {"dv/dt_r" = "corner", "dv/dt_f" = "corner", r_load = "quantity"}
 
     [[Submodel.Rising_Waveform]]
-    "rising_waveform" = "rising_waveform"
-    "r_fixture" = "r_fixture"
-    "v_fixture" = "v_fixture"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "none"}
+    __param__  = {r_fixture = "quantity", v_fixture = "quantity"}
+
     [[Submodel.Falling_Waveform]]
-    "falling_waveform" = "falling_waveform"
-    "r_fixture" = "r_fixture"
-    "v_fixture" = "v_fixture"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "none"}
+    __param__  = {r_fixture = "quantity", v_fixture = "quantity"}
 
 # -----------------------------------------------------------------------------
 # External Circuit
 # -----------------------------------------------------------------------------
 [[External_Circuit]]
-"external_circuit" = "external_circuit"   # language / 名称
-"language" = "language"
-"corner" = "corner"
-"parameters" = "parameters"
-"converter_parameters" = "converter_parameters"
-"ports" = "ports"
-"d_to_a" = "d_to_a"
-"a_to_d" = "a_to_d"
+__schema__ = {required = false, format = "text"}
+__header__ = {format = "text"}
 
-    # [Circuit Model] 的同名 section（空类型）
+    [External_Circuit.__param__]
+    language = "text"
+    corner = "text"
+    parameters = "text"
+    converter_parameters = "text"
+    ports = "text"
+    d_to_a = "text"
+    a_to_d = "text"
+
     [External_Circuit.Circuit_Model]
-    "circuit_model" = "circuit_model"
-    # [Port Map] 的同名 section（空类型）
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "textlines"}
+    __param__  = "none"
+
     [External_Circuit.Port_Map]
-    "port_map" = "port_map"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
 
 # -----------------------------------------------------------------------------
 # Test Data
 # -----------------------------------------------------------------------------
 [[Test_Data]]
-"test_data" = "test_data"                 # 测试名
-"test_data_type" = "test_data_type"
-"driver_model" = "driver_model"
-"driver_model_inv" = "driver_model_inv"
-"test_load" = "test_load"
+__schema__ = {required = false, format = "text"}
+__header__ = {format = "text"}
+
+    [Test_Data.__param__]
+    test_data_type = "text"
+    driver_model = "text"
+    driver_model_inv = "text"
+    test_load = "text"
 
     [Test_Data.Rising_Waveform_Near]
-    "rising_waveform_near" = "rising_waveform_near"
-    "data" = "v-t_data"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Data.Falling_Waveform_Near]
-    "falling_waveform_near" = "falling_waveform_near"
-    "data" = "v-t_data"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Data.Rising_Waveform_Far]
-    "rising_waveform_far" = "rising_waveform_far"
-    "data" = "v-t_data"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Data.Falling_Waveform_Far]
-    "falling_waveform_far" = "falling_waveform_far"
-    "data" = "v-t_data"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Data.Diff_Rising_Waveform_Near]
-    "diff_rising_waveform_near" = "diff_rising_waveform_near"
-    "data" = "v-t_data"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Data.Diff_Falling_Waveform_Near]
-    "diff_falling_waveform_near" = "diff_falling_waveform_near"
-    "data" = "v-t_data"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Data.Diff_Rising_Waveform_Far]
-    "diff_rising_waveform_far" = "diff_rising_waveform_far"
-    "data" = "v-t_data"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Data.Diff_Falling_Waveform_Far]
-    "diff_falling_waveform_far" = "diff_falling_waveform_far"
-    "data" = "v-t_data"
+    __schema__ = {required = false, format = "VT-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
 
 # -----------------------------------------------------------------------------
 # Test Load
 # -----------------------------------------------------------------------------
 [[Test_Load]]
-"test_load" = "test_load"                 # 负载名
-"test_load_type" = "test_load_type"
-"c1_near" = "c1_near"
-"rs_near" = "rs_near"
-"ls_near" = "ls_near"
-"c2_near" = "c2_near"
-"rp1_near" = "rp1_near"
-"rp2_near" = "rp2_near"
-"td" = "td"
-"zo" = "zo"
-"rp1_far" = "rp1_far"
-"rp2_far" = "rp2_far"
-"c2_far" = "c2_far"
-"ls_far" = "ls_far"
-"rs_far" = "rs_far"
-"c1_far" = "c1_far"
-"v_term1" = "v_term1"
-"v_term2" = "v_term2"
-"r_diff_near" = "r_diff_near"
-"r_diff_far" = "r_diff_far"
-"receiver_model" = "receiver_model"
-"receiver_model_inv" = "receiver_model_inv"
+__schema__ = {required = false, format = "text"}
+__header__ = {format = "text"}
+
+    [Test_Load.__param__]
+    test_load_type = "text"
+    c1_near = "quantity"
+    rs_near = "quantity"
+    ls_near = "quantity"
+    c2_near = "quantity"
+    rp1_near = "quantity"
+    rp2_near = "quantity"
+    td = "quantity"
+    zo = "quantity"
+    rp1_far = "quantity"
+    rp2_far = "quantity"
+    c2_far = "quantity"
+    ls_far = "quantity"
+    rs_far = "quantity"
+    c1_far = "quantity"
+    v_term1 = "quantity"
+    v_term2 = "quantity"
+    r_diff_near = "quantity"
+    r_diff_far = "quantity"
+    receiver_model = "text"
+    receiver_model_inv = "text"
 
     [Test_Load.Reference_Supply]
-    "reference_supply" = "reference_supply"
-    "value" = "reference_supply_value"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "corner"}
+    __param__  = "none"
+
     [Test_Load.Pulldown]
-    "pulldown" = "pulldown"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Load.Pullup]
-    "pullup" = "pullup"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Load.GND_Clamp]
-    "gnd_clamp" = "gnd_clamp"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Test_Load.Power_Clamp]
-    "power_clamp" = "power_clamp"
-    "data" = "i-v_data"
+    __schema__ = {required = false, format = "IV-table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
 
 # -----------------------------------------------------------------------------
 # Define Package Model
 # -----------------------------------------------------------------------------
 [[Define_Package_Model]]
-"define_package_model" = "define_package_model"  # 封装模型名
+__schema__ = {required = false, format = "text"}
+__header__ = {format = "text"}
+__param__  = "none"
 
     [Define_Package_Model.Manufacturer]
-    "manufacturer" = "manufacturer"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = "none"
+
     [Define_Package_Model.OEM]
-    "oem" = "oem"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = "none"
+
     [Define_Package_Model.Description]
-    "description" = "description"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "textlines"}
+    __param__  = "none"
+
     [Define_Package_Model.Number_Of_Sections]
-    "number_of_sections" = "number_of_sections"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = "none"
+
     [Define_Package_Model.Number_Of_Pins]
-    "number_of_pins" = "number_of_pins"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = "none"
 
-    # [Pin Numbers]（多实例行式表）
     [[Define_Package_Model.Pin_Numbers]]
-    "pin_numbers" = "pin_numbers"
-    "len" = "len"
-    "l" = "l"
-    "r" = "r"
-    "c" = "c"
-    "fork" = "fork"
-    "endfork" = "endfork"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
 
-    # [Merged Pins]（空类型：多行文本）
+        [Define_Package_Model.Pin_Numbers.__param__]
+        col0 = "text"
+        len = "text"
+        l = "quantity"
+        r = "quantity"
+        c = "quantity"
+        fork = "text"
+        endfork = "text"
+
     [Define_Package_Model.Merged_Pins]
-    "merged_pins" = "merged_pins"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "none"}
+    __param__  = "none"
 
-    # [Model Data]（空类型：含 RLGC 矩阵）
     [Define_Package_Model.Model_Data]
-    "model_data" = "model_data"
-        # [Resistance Matrix] / [Inductance Matrix] / [Capacitance Matrix]
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = "none"
+
         [Define_Package_Model.Model_Data.Resistance_Matrix]
-        "resistance_matrix" = "resistance_matrix"
-        "bandwidth" = "bandwidth"
-        "row" = "row"
+        __schema__ = {required = false, format = "table"}
+        __header__ = {format = "table_header"}
+        __param__  = {bandwidth = "quantity"}
+
         [Define_Package_Model.Model_Data.Inductance_Matrix]
-        "inductance_matrix" = "inductance_matrix"
-        "bandwidth" = "bandwidth"
-        "row" = "row"
+        __schema__ = {required = false, format = "table"}
+        __header__ = {format = "table_header"}
+        __param__  = {bandwidth = "quantity"}
+
         [Define_Package_Model.Model_Data.Capacitance_Matrix]
-        "capacitance_matrix" = "capacitance_matrix"
-        "bandwidth" = "bandwidth"
-        "row" = "row"
+        __schema__ = {required = false, format = "table"}
+        __header__ = {format = "table_header"}
+        __param__  = {bandwidth = "quantity"}
 
 # -----------------------------------------------------------------------------
 # Interconnect Model Set
 # -----------------------------------------------------------------------------
 [[Interconnect_Model_Set]]
-"interconnect_model_set" = "interconnect_model_set"  # 互连模型集名
+__schema__ = {required = false, format = "text"}
+__header__ = {format = "text"}
+__param__  = "none"
 
     [Interconnect_Model_Set.Manufacturer]
-    "manufacturer" = "manufacturer"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = "none"
+
     [Interconnect_Model_Set.Description]
-    "description" = "description"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "textlines"}
+    __param__  = "none"
 
-    # [Interconnect Model]（多实例）
     [[Interconnect_Model_Set.Interconnect_Model]]
-    "interconnect_model" = "interconnect_model"
-    "param" = "param"
-    "file_ts" = "file_ts"
-    "file_ibis_iss" = "file_ibis_iss"
-    "unused_port_termination" = "unused_port_termination"
-    "number_of_terminals" = "number_of_terminals"
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "text"}
 
-    # [Port Map]（空类型）
+        [Interconnect_Model_Set.Interconnect_Model.__param__]
+        param = "text"
+        file_ts = "text"
+        file_ibis_iss = "text"
+        unused_port_termination = "text"
+        number_of_terminals = "quantity"
+
     [Interconnect_Model_Set.Port_Map]
-    "port_map" = "port_map"
-    # [Manchester Encoder]（空类型）
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+    __param__  = "none"
+
     [Interconnect_Model_Set.Manchester_Encoder]
-    "manchester_encoder" = "manchester_encoder"
-    # [Pin Mapping]（多实例行式表）
+    __schema__ = {required = false, format = "text"}
+    __header__ = {format = "none"}
+    __param__  = "none"
+
     [[Interconnect_Model_Set.Pin_Mapping]]
-    "pin_mapping" = "pin_mapping"
-    "pin_name" = "pin_name"
-    "pulldown_ref" = "pulldown_ref"
-    "pullup_ref" = "pullup_ref"
-    "gnd_clamp_ref" = "gnd_clamp_ref"
-    "power_clamp_ref" = "power_clamp_ref"
-    "ext_ref" = "ext_ref"
+    __schema__ = {required = false, format = "table"}
+    __header__ = {format = "table_header"}
+
+        [Interconnect_Model_Set.Pin_Mapping.__param__]
+        col0 = "text"
+        pulldown_ref = "text"
+        pullup_ref = "text"
+        gnd_clamp_ref = "text"
+        power_clamp_ref = "text"
+        ext_ref = "text"
