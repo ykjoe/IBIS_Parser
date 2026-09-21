@@ -1,15 +1,19 @@
-//! IBIS numerical strong-type definitions (re-export compatibility layer).
+//! IBIS parsing types (re-export compatibility layer).
 //!
-//! Re-exports the **numerically-typed** strong model from the `ibis2ibstoml`
-//! `schema::keyword_hierarchy` so that the `ibis_parser::schema::keyword_hierarchy`
-//! path stays usable by older consumers.
+//! The numerically-typed strong model that used to live in
+//! `ibis2ibstoml::schema::keyword_hierarchy` no longer exists: the backend now
+//! produces the typed parsed tree (`ibis2ibstoml::backend::ParsedNode` and its
+//! value types). The old import paths are kept as aliases so existing consumers
+//! keep compiling:
 //!
-//! All electrical quantities are `f64` (zero string pollution: `1.12p` →
-//! `1.12e-12`); `NA` maps to `None`. See
-//! [`ibis2ibstoml::schema::keyword_hierarchy`](ibis2ibstoml::schema::keyword_hierarchy)
-//! for the authoritative definitions.
+//! - `ibis_parser::keyword_hierarchy` — the backend module with the parsed tree;
+//! - `ibis_parser::model` — legacy alias for the same module.
+//!
+//! Values stay text-only: quantities keep their original spelling and unit
+//! (`1.65V` stays `"1.65V"`), corners are `(typ, min, max)` triples and tables are
+//! `{ header, data }`.
 
-pub use ibis2ibstoml::schema::keyword_hierarchy;
+pub use ibis2ibstoml::backend as keyword_hierarchy;
 
 // 兼容旧引用路径 `ibis_parser::ibis_parser::model`。
-pub use ibis2ibstoml::schema::keyword_hierarchy as model;
+pub use ibis2ibstoml::backend as model;
