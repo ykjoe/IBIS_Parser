@@ -68,7 +68,14 @@
 
 use crate::frontend::SectionNode;
 use crate::schema::{
-    find_field, normalize_keyword, to_snake_key, Occurrence, ParamType, SectionFormat, SectionSpec,
+    find_field, normalize_keyword, Occurrence, ParamType, SectionFormat, SectionSpec,
+};
+
+// The value model lives in `schema` — it says what the specification means — and is
+// re-exported here so the parsing code below, and the historical
+// `backend::content_parse::…` paths, keep resolving.
+pub(crate) use crate::schema::{
+    Corner, IV_COLUMN_NAMES, ParsedField, ParsedTable, ParsedValue, VT_COLUMN_NAMES,
 };
 
 use super::pre_process::{resolve_spec, KeywordMark};
@@ -84,58 +91,6 @@ pub(crate) use parse_value::split_number_unit;
 // =============================================================================
 // [1] Data Structures & Constructors
 // =============================================================================
-
-/// Key used for content lines that no schema declaration accounts for.
-///
-pub const UNMATCHED_LINES_KEY: &str = "lines";
-pub const IV_COLUMN_NAMES: [&str; 4] = ["Voltage", "I(typ)", "I(min)", "I(max)"];
-pub const VT_COLUMN_NAMES: [&str; 4] = ["Time", "V(typ)", "V(min)", "V(max)"];
-
-/// A corner triple in IBIS order: typical, minimum, maximum.
-///
-/// Each element keeps the original text (`"3.3000V"`); an absent or `NA` element is
-/// stored as an empty string.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Corner(
-    pub String, // Typical element, kept as written.
-    pub String, // Minimum element, kept as written.
-    pub String, // Maximum element, kept as written.
-);
-
-/// A row-oriented table: the column names plus the data rows.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParsedTable {
-    pub header: Vec<String>,   // Column names; empty when the schema declares no source.
-    pub data: Vec<Vec<String>>, // Cell text in column order; a short row means trailing cells were absent.
-}
-
-/// The value carried by one parsed field.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ParsedValue {
-    Text(String),       // Plain text: identifiers, enumerations and quantities as written.
-    Corner(Corner),     // Corner triple `(typ, min, max)`.
-    Table(ParsedTable), // Row-oriented table (`{ header = [], data = [] }`).
-    Lines(Vec<String>), // Ordered free-text lines.
-}
-
-/// One typed field of a parsed node.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParsedField {
-    pub key: String,        // Output key: the keyword's own snake key or a param name.
-    pub value: ParsedValue, // Typed value of the field.
-}
-
-impl ParsedField {
-    /// Builds the field holding a node's own value, keyed by its snake-cased keyword.
-    fn self_value(spec: &SectionSpec, value: ParsedValue) -> ParsedField {
-        ParsedField { key: to_snake_key(&spec.name), value }
-    }
-
-    /// Builds the `lines` field that keeps content no declaration accounts for.
-    fn unmatched(lines: Vec<String>) -> ParsedField {
-        ParsedField { key: UNMATCHED_LINES_KEY.to_string(), value: ParsedValue::Lines(lines) }
-    }
-}
 
 /// One parsed keyword node — the AST node with its content turned into fields.
 #[derive(Debug, Clone, PartialEq)]

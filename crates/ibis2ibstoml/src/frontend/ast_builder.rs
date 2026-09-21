@@ -3,20 +3,21 @@
 //! This module defines the core data structures produced by the syntax
 //! analysis stage (`NodeKind` / `SectionNode` / `ParsedBlock`) and recursively
 //! builds the multi-level [`SectionNode`] tree from the flat [`ParsedBlock`]
-//! list — i.e., "building the abstract syntax tree"
-//! ([`build_section_tree`]).
+//! list — i.e., "building the abstract syntax tree" ([`build_section_tree`]).
 //!
-//! Tree building classifies which consecutive blocks belong to the virtual
-//! `[File_Header]` container via [`header_field::is_header_field_keyword`], so
-//! the rule lives here at the AST stage.
+//! Every block carries the nesting level, which the schema owns
+//! ([`keyword_level`](crate::schema::keyword_level)), so tree building branches on
+//! integers rather than on grammar tags. Tree building also classifies which
+//! consecutive blocks belong to the virtual
+//! [`File_Header`](crate::schema::FILE_HEADER_CONTAINER) container via
+//! [`header_field::is_header_field_keyword`], so that rule lives here at the AST
+//! stage.
 
 pub use ast_types::{NodeKind, ParsedBlock, SectionNode};
 pub use tree_builder::build_section_tree;
 
 /// AST data structures — node kinds and the flat block intermediate form.
 pub(crate) mod ast_types {
-    use crate::frontend::Rule;
-
     /// Role of a section node in the TOML output.
     ///
     /// The frontend does NOT distinguish array-of-tables (`[[...]]`) from
@@ -39,8 +40,8 @@ pub(crate) mod ast_types {
     /// A parsed keyword block with its content lines.
     #[derive(Debug, Clone)]
     pub struct ParsedBlock {
-        pub keyword: String,                    // Raw keyword name (e.g., "Component", "IBIS ver", "Package").
-        pub rule: Rule,                         // Pest rule variant that matched this keyword header.
+        pub keyword: String,                    // Raw keyword name (e.g., "Component", "IBIS ver", "Pin").
+        pub level: usize,                       // Nesting level read from the schema (`schema::keyword_level`).
         pub content: Vec<String>,               // Content lines belonging to this block.
     }
 }
@@ -72,32 +73,34 @@ mod header_field {
 
 /// Tree building — recursively construct the section tree from flat blocks.
 mod tree_builder {
-    use crate::frontend::Rule;
     use crate::frontend::ast_builder::ast_types::{NodeKind, ParsedBlock, SectionNode};
+    use crate::schema::{keyword_level, FILE_HEADER_CONTAINER};
 
     use super::header_field::is_file_header_field;
 
     /// Build a hierarchical section tree from flat parsed blocks.
     ///
     /// Processes `blocks[start..]` recursively: consecutive file header fields
-    /// are grouped under a virtual `[File_Header]` node, first-level keywords
-    /// become parent nodes that recursively collect their children, and
-    /// `[End]` markers are skipped.
+    /// are grouped under a virtual `[File_Header]` node, top-level sections
+    /// (`level == ROOT`) become parent nodes that recursively collect their
+    /// children, and the terminator (`level == TERMINATOR`) is skipped. Every
+    /// other level is a child section, whatever its depth.
     ///
     /// # Parameters
     ///
     /// * `blocks` — Flat list of parsed keyword blocks in file order.
     /// * `start` — Starting index for this recursion level.
-    /// * `stop_rules` — Rule variants that stop child collection.
+    /// * `stop_levels` — Keyword levels that stop child collection.
     ///
     /// # Returns
     ///
     /// * `Vec<SectionNode>` — The nodes built at this level.
-    /// * `usize` — The next block index to process (after `[End]` or a stop rule).
+    /// * `usize` — The next block index to process (after the terminator or a
+    ///   stop level).
     pub fn build_section_tree(
         blocks: &[ParsedBlock],
         start: usize,
-        stop_rules: &[Rule],
+        stop_levels: &[usize],
     ) -> (Vec<SectionNode>, usize) {
         let mut nodes: Vec<SectionNode> = Vec::new();
         let mut block_index = start;
@@ -115,7 +118,7 @@ mod tree_builder {
                 block_index += 1;
             }
             nodes.push(SectionNode {
-                keyword: "File_Header".into(),
+                keyword: FILE_HEADER_CONTAINER.into(),
                 kind: NodeKind::FileHeader,
                 content: Vec::new(),
                 children,
@@ -127,19 +130,19 @@ mod tree_builder {
         while block_index < blocks.len() {
             let block = &blocks[block_index];
 
-            // Stop collecting when a stop rule is reached.
-            if stop_rules.contains(&block.rule) {
+            // Stop collecting when a stop level is reached.
+            if stop_levels.contains(&block.level) {
                 break;
             }
 
-            if block.rule == Rule::kw_end {
+            if block.level == keyword_level::TERMINATOR {
                 // Skip the `[End]` marker.
                 block_index += 1;
                 continue;
             }
 
-            if block.rule == Rule::first_level_keyword {
-                // First-level container: create a parent node and recursively collect children.
+            if block.level == keyword_level::ROOT {
+                // Top-level container: create a parent node and recursively collect children.
                 let keyword_name = block.keyword.clone();
                 let content = block.content.clone();
                 block_index += 1;
@@ -148,7 +151,7 @@ mod tree_builder {
                 let (children, next_index) = build_section_tree(
                     blocks,
                     block_index,
-                    &[Rule::first_level_keyword, Rule::kw_end],
+                    &[keyword_level::ROOT, keyword_level::TERMINATOR],
                 );
                 block_index = next_index;
 
@@ -159,7 +162,7 @@ mod tree_builder {
                     children,
                 });
             } else {
-                // Second-level or generic keyword → child or singleton node.
+                // Any deeper level (N >= 2) → child or singleton node.
                 nodes.push(SectionNode {
                     keyword: block.keyword.clone(),
                     kind: NodeKind::Regular,
@@ -176,19 +179,19 @@ mod tree_builder {
 
 #[cfg(test)]
 mod tests {
-    use crate::frontend::Rule;
+    use crate::schema::{keyword_level, FILE_HEADER_CONTAINER};
 
     use super::*;
 
     #[test]
     fn test_build_section_tree_file_header() {
         let blocks = vec![
-            ParsedBlock { keyword: "IBIS ver".into(), rule: Rule::second_level_keyword, content: vec!["2.1".into()] },
-            ParsedBlock { keyword: "File name".into(), rule: Rule::second_level_keyword, content: vec!["test.ibs".into()] },
+            ParsedBlock { keyword: "IBIS ver".into(), level: keyword_level::SECOND_LEVEL, content: vec!["2.1".into()] },
+            ParsedBlock { keyword: "File name".into(), level: keyword_level::SECOND_LEVEL, content: vec!["test.ibs".into()] },
         ];
         let (tree, _) = build_section_tree(&blocks, 0, &[]);
         assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].keyword, "File_Header");
+        assert_eq!(tree[0].keyword, FILE_HEADER_CONTAINER);
         assert_eq!(tree[0].children.len(), 2);
         assert_eq!(tree[0].children[0].keyword, "IBIS ver");
     }
@@ -196,9 +199,9 @@ mod tests {
     #[test]
     fn test_build_section_tree_component_with_children() {
         let blocks = vec![
-            ParsedBlock { keyword: "Component".into(), rule: Rule::first_level_keyword, content: vec!["MyComp".into()] },
-            ParsedBlock { keyword: "Manufacturer".into(), rule: Rule::second_level_keyword, content: vec!["Acme".into()] },
-            ParsedBlock { keyword: "Package".into(), rule: Rule::second_level_keyword, content: vec!["R_pkg 0.1".into()] },
+            ParsedBlock { keyword: "Component".into(), level: keyword_level::ROOT, content: vec!["MyComp".into()] },
+            ParsedBlock { keyword: "Manufacturer".into(), level: keyword_level::SECOND_LEVEL, content: vec!["Acme".into()] },
+            ParsedBlock { keyword: "Package".into(), level: keyword_level::SECOND_LEVEL, content: vec!["R_pkg 0.1".into()] },
         ];
         let (tree, _) = build_section_tree(&blocks, 0, &[]);
         assert_eq!(tree.len(), 1);
@@ -207,17 +210,45 @@ mod tests {
     }
 
     #[test]
+    fn test_build_section_tree_skips_the_terminator() {
+        let blocks = vec![
+            ParsedBlock { keyword: "Component".into(), level: keyword_level::ROOT, content: vec!["MyComp".into()] },
+            ParsedBlock { keyword: "End".into(), level: keyword_level::TERMINATOR, content: vec![] },
+        ];
+        let (tree, next_index) = build_section_tree(&blocks, 0, &[]);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].keyword, "Component");
+        assert_eq!(next_index, 2);
+    }
+
+    #[test]
+    fn test_build_section_tree_treats_every_deeper_level_as_a_child() {
+        // Levels 2 and 3 are the same kind of thing — a child section — so the
+        // deeper one is flattened into a sibling and tree building never needs to
+        // know which parent a grandchild belongs to.
+        let blocks = vec![
+            ParsedBlock { keyword: "Define Package Model".into(), level: keyword_level::ROOT, content: vec![] },
+            ParsedBlock { keyword: "Model Data".into(), level: keyword_level::SECOND_LEVEL, content: vec![] },
+            ParsedBlock { keyword: "Resistance Matrix".into(), level: 3, content: vec!["R1 R2".into()] },
+        ];
+        let (tree, _) = build_section_tree(&blocks, 0, &[]);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].children.len(), 2);
+        assert_eq!(tree[0].children[1].keyword, "Resistance Matrix");
+    }
+
+    #[test]
     fn test_is_file_header_field() {
         let header_block = ParsedBlock {
             keyword: "IBIS ver".into(),
-            rule: Rule::second_level_keyword,
+            level: keyword_level::SECOND_LEVEL,
             content: vec![],
         };
         assert!(header_field::is_file_header_field(&header_block));
 
         let non_header_block = ParsedBlock {
             keyword: "Pin".into(),
-            rule: Rule::second_level_keyword,
+            level: keyword_level::SECOND_LEVEL,
             content: vec![],
         };
         assert!(!header_field::is_file_header_field(&non_header_block));

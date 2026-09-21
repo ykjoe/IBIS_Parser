@@ -1,8 +1,8 @@
 # ibis2ibstoml 架构书
 
 > **本文档定位**：描述 `ibis2ibstoml` 独立 crate 的架构设计，是仓库中关于该 crate 的权威架构说明。
-> 本文档描述**完整的三阶段流水线**：frontend（文本 → AST 树）→ backend（语义层：树 → 强类型 → 校验）→ emitter（强类型 → TOML）。
-> 根包 `ibis_parser`（re-export 兼容层）另见 [`ibis_parser_architecture.md`](ibis_parser_architecture.md:1)。
+> 本文档描述**完整的三阶段流水线**：frontend（文本 → AST 树）→ backend（语义层：树 → 类型化解析树 + 诊断报告）→ emitter（类型化解析树 → TOML）。
+> 根包 `ibis_parser`（re-export 兼容层）仅重导出本 crate，其引用方式见 §1.2。
 
 ---
 
@@ -29,11 +29,7 @@
    - [4.3 数据结构](#43-数据结构)
    - [4.4 输入输出](#44-输入输出)
 5. [测试策略](#5-测试策略)
-6. [附录](#6-附录)
-   - [6.1 语义约定](#61-语义约定)
-   - [6.2 明确不做（out-of-scope）](#62-明确不做out-of-scope)
-   - [6.3 关键决策记录（ADR）](#63-关键决策记录adr)
-   - [6.4 参考文件](#64-参考文件)
+6. [参考文件](#6-参考文件)
 
 ---
 
@@ -43,34 +39,35 @@
 
 `ibis2ibstoml` 是从主 crate 拆分出的**第一遍格式整形层**，读入 IBIS 文本，输出**语义化 TOML** 字符串。
 
-**核心能力**：frontend 把所有值保留为原始字符串；backend 语义层在此基础上执行**结构解构、数值化重建与语义校验**，产出数值化的强类型领域模型与符号表（[`IBIS_File`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1)）；emitter 从强类型输出 TOML（含 `[[array-of-tables]]`）。
+**核心能力**：frontend 把所有值保留为原始字符串；backend 语义层在此基础上执行**关键字标记、内容类型化与形状校验**，产出保真的**类型化解析树**（[`ParsedNode`](../crates/ibis2ibstoml/src/backend/content_parse.rs:142)）与**诊断报告**；emitter 从解析树输出 TOML（含 `[[array-of-tables]]`）。
 
 采用**三阶段流水线**：
 
 1. **frontend** — 唯一公开接口 [`frontend::parse`](../crates/ibis2ibstoml/src/frontend/mod.rs:75)：IBIS 文本 → `SectionNode` AST 树。内部按词法 → 语法 → AST 建树三段式组织，各阶段能力为**模块内普通函数**（`fn`），不引入 trait / carrier 抽象。
-2. **backend** — 语义层：消费 `SectionNode` 树，按「关键字与多实例标记（`keyword_valid`）→ 结构解构与符号表构建（`symbol_table_build`）→ 物理与逻辑数据校验（`data_valid`）」三阶段处理，产出数值化强类型 [`IBIS_File`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1)。校验提供严格 / 宽松双模式。
-3. **emitter** — 将强类型 `IBIS_File` 递归序列化为 TOML 字符串（含 `[[array-of-tables]]`）。
+2. **backend** — 语义层：消费 `SectionNode` 树，按「关键字标记（`pre_process`）→ 内容类型化（`content_parse`）→ 内容与形状校验（`validation`）」三阶段处理，产出类型化解析树 [`ParsedNode`](../crates/ibis2ibstoml/src/backend/content_parse.rs:142) 与 [`ValidationReport`](../crates/ibis2ibstoml/src/backend/validation.rs:144)。校验提供严格 / 宽松双模式。
+3. **emitter** — 将类型化解析树递归序列化为 TOML 字符串（含 `[[array-of-tables]]`）。
 
-**backend 两条核心设计原则**（区别于旧版「字符串承载」推导）：
+**backend 三条核心设计原则**：
 
-- **Rebuild 而非原地修改（In-place）**：AST 仅用作**一次性语法结构**，backend 只读解构它、不保留、不原地改写。在第二步中将其彻底解构并**重新构建（Rebuild）**为干净、强类型的领域模型与符号表（推荐使用 `indexmap` 以同时保证 $O(1)$ 查找和顺序保留）。
-- **零字符串污染**：进入 backend 后，所有带工程单位的文本（如 `1.12p`、`10mA`、`3.3V`）**必须**被解析为标准浮点数（`f64`）；IV 曲线被解析为结构化的 [`Vec<ViPoint>`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1)。字符串仅保留在**标识符类**字段（`model_name`、`signal_name`、文件名等）与**非数值文本**字段（`Model_type`、`Polarity`、`Notes` 等）。
+- **AST 只读，解析树重建（Rebuild）**：AST 仅用作**一次性语法结构**，backend 只读解构它、不保留、不原地改写。在第二步中把它彻底解构并**重建**为干净的类型化解析树（字段 + 子节段，树形与 AST 同构）。
+- **schema 驱动**：keyword 层级、单例 / 多实例、必填、正文形态（`__schema__.format`）、关键字行形态（`__header__.format`）与具名参数类型（`__param__`）全部来自 [`ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1)（唯一结构规范）。改规范只改 schema，不改代码。
+- **文本保真（零数值归一化）**：进入 backend 后**不换算任何数值**。带工程单位的文本保持原文（`1.65V` 仍是 `"1.65V"`、`1.12p` 仍是 `"1.12p"`）；角点解析为 [`Corner`](../crates/ibis2ibstoml/src/backend/content_parse.rs:99) 三元组 `(typ, min, max)`；行式数据与 IV / VT 曲线统一以 [`ParsedTable`](../crates/ibis2ibstoml/src/backend/content_parse.rs:107) `{ header, data }` 承载。数值仅在**校验时被读取**（[`split_number_unit`](../crates/ibis2ibstoml/src/backend/content_parse.rs:501)）以判断形状，绝不写回或缩放。`NA` 与空 token 一律视为**缺失**。
 
-> **命名约定**：强类型**沿用旧版命名**（`IBIS_File` / `IBIS_Component` / `IBIS_Model` / `PinInfo` / `Triplet<f64>` 等），仅新增 `ViPoint`（IV 曲线数据点）类型。重构的重点是**三步走流水线**与**零字符串污染**，而非类型改名。
+> **命名约定**：类型沿用当前实现命名（`ParsedNode` / `ParsedField` / `ParsedValue` / `Corner` / `ParsedTable`）。旧版强类型（`IBIS_File` / `IBIS_Component` / `IBIS_Model` / `PinInfo` / `Triplet<f64>` / `ViPoint`）与「IR」系列命名（`IRNode` / `Quantity` / `Ratio`）**均已废弃**，本文档不再引用。
 
 **拆分动机**：
 
 - **独立演进** — `ibis2ibstoml` 独立版本化、独立测试、独立发布
 - **职责清晰** — 按 frontend → backend → emitter 分层，符合管道模型
-- **编译隔离** — 主 crate 不再直接编译 pest 语法生成代码
+- **编译隔离** — 主 crate 不直接编译 `ibis2ibstoml` 内部的解析实现
 - **可复用** — 其他工具链可直接依赖该 crate
 
 ```mermaid
 flowchart LR
     subgraph 流水线
         direction LR
-        F[frontend 文本转AST树] --> B[backend 语义层树转数值化强类型]
-        B --> E[emitter 强类型转TOML]
+        F[frontend 文本转AST树] --> B[backend 语义层树转类型化解析树]
+        B --> E[emitter 解析树转TOML]
     end
     TEXT[/IBIS 文本/] --> F
     E --> TOML[/TOML 字符串/]
@@ -82,114 +79,107 @@ flowchart LR
 
 | 引用方 | 用法 |
 |--------|------|
-| 根 [`src/lib.rs`](../src/lib.rs:31) | `pub use ibis2ibstoml;` — 根包重导出，兼容旧引用路径 |
+| 根 [`src/lib.rs`](../src/lib.rs:35) | `pub use ibis2ibstoml;` — 根包重导出，兼容旧引用路径 |
 | 根 [`src/main.rs`](../src/main.rs:8) | `use ibis2ibstoml::ibs2ibstoml;` 直接调用 |
-| 根 [`src/ibis_parser/mod.rs`](../src/ibis_parser/mod.rs:8) | re-export 子 crate 数值化强类型（`ibis_parser::ibis_structure` 路径兼容） |
-| 根 [`tests/header_parse_test.rs`](../tests/header_parse_test.rs:22) | `use ibis2ibstoml::frontend::{parse, NodeKind, SectionNode};` |
-| crate 内部 [`tests/examples_compat_test.rs`](../crates/ibis2ibstoml/tests/examples_compat_test.rs:12) | `use ibis2ibstoml::parse_to_toml;` |
+| 根 [`src/ibis_parser/mod.rs`](../src/ibis_parser/mod.rs:16) | `pub use ibis2ibstoml::backend as keyword_hierarchy;`（另以 `model` 同名再导出），保持旧路径可用 |
+| 根 [`tests/header_parse_test.rs`](../tests/header_parse_test.rs:24) | `use ibis2ibstoml::frontend::{parse, NodeKind, SectionNode};` 与 `use ibis2ibstoml::{parse_to_parsed, ParsedNode, ParsedValue};` |
 
 **依赖说明**：
 
-- `pest` / `pest_derive` **仅存在于** ibis2ibstoml crate 内（语法生成只在其中发生）
-- `indexmap` 提供保序集合（强类型模型与符号表中的 `IndexMap` 字段）
-- TOML 输出为**手写序列化**，不依赖 `toml` crate
-- **强类型领域模型** 定义于 `backend/ibis_structure.rs`，backend 各阶段与 emitter 共享
+- frontend **不使用任何语法引擎**：keyword 层级直接读自 [`ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1)；旧 pest 语法已归档到 [`plans/legacy/ibis.pest`](legacy/ibis.pest:1)（仅供参考，不参与编译）
+- `toml` crate 用于**加载** [`ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1)，且**必须**开启 `preserve_order`（`__param__` 的声明顺序即字段顺序）
+- TOML **输出**为**手写序列化**，不依赖 `toml` crate
+- crate `Cargo.toml` 另声明了 `indexmap` / `serde` / `validator`，但**当前源码未引用**（历史遗留，见 §6.3）
 - 根包持有 `tauri` / `serde` / `serde_json` / `toml`，与 ibis2ibstoml 解耦
 
 ```mermaid
 graph LR
     ROOT[ibis_parser 根包 src] -->|path 依赖| C2T[ibis2ibstoml 子 crate]
-    C2T --> P[pest]
-    C2T --> PD[pest_derive]
-    C2T --> IM[indexmap]
+    C2T --> TM[toml preserve_order]
     ROOT --> T[tauri]
     ROOT --> S[serde]
     ROOT --> SJ[serde_json]
-    ROOT --> TM[toml]
+    ROOT --> TM2[toml]
 ```
 
 **crate 目录结构**：
 
 ```text
 crates/ibis2ibstoml/
-├── Cargo.toml                  # name = "ibis2ibstoml"，deps: pest, pest_derive, indexmap, serde, toml, validator
-├── tests/
-│   └── examples_compat_test.rs # 集成测试：真实样本 → 强类型 → 对照参考 .ibs.toml
+├── Cargo.toml                  # name = "ibis2ibstoml"；实际使用 toml(preserve_order)
 └── src/
-    ├── lib.rs                  # Crate 入口：parse_to_toml / ibs2ibstoml（流水线编排点）
+    ├── lib.rs                  # Crate 入口：parse_to_toml / parse_to_parsed / ibs2ibstoml（流水线编排点）
     ├── schema/                 # ★ IBIS 规范唯一数据源（"抄手册"集中地）
-    │   ├── mod.rs              # 加载 ibis_schema.toml → SectionSpec 树 + 辅助（normalize_keyword / find_root / find_child）
-    │   ├── ibis_schema.toml    # IBIS 7.0 结构：keyword 树 + 同名 section + 字段类型（抄手册格式）
-    │   └── model.rs            # 数值化强类型结构体（IBISFile/IBISModel/...）+ validator 声明式校验
+    │   ├── mod.rs              # 薄编排：模块声明 + 公共 re-export
+    │   ├── spec.rs             # 语义层 types（全部类型 + 值模型 + 固定词汇）与语法层 naming
+    │   ├── loader.rs           # ibis_schema.toml → 缓存 SectionSpec 树（cache / section / decode 三个内联 mod）
+    │   ├── lookup.rs           # 查询原语（schema / keyword / param 三个内联 mod）
+    │   └── ibis_schema.toml    # IBIS 7.0 结构：keyword 树 + 同名 section + 字段类型（抄手册格式）
     ├── frontend/
     │   ├── mod.rs              # 唯一公开接口 parse：IBIS 文本 → SectionNode 树
-    │   ├── lexical_analysis.rs # 词法阶段（grammar / parser / extraction 子模块）
-    │   ├── syntax_analysis.rs  # 语法阶段（line_type / block_grouping 子模块，含 recovery）
-    │   ├── ast_builder.rs      # AST 阶段（ast_types / header_field / tree_builder 子模块；header_field 从 schema 读取）
-    │   └── ibis.pest           # pest 语法文件（kw_* 规则，规范以 ibis_schema.toml 为准）
+    │   ├── lexical_analysis.rs # 词法阶段（parser 子模块：纯字符串读取原语）
+    │   ├── syntax_analysis.rs  # 语法阶段（line_type / block_grouping 子模块；用 find_level 定级）
+    │   └── ast_builder.rs      # AST 阶段（keyword_level / ast_types / header_field / tree_builder 子模块；header_field 读 schema）
     ├── backend/
     │   ├── mod.rs              # 语义层编排入口 semantic_parse / semantic_parse_lenient
-    │   ├── spec.rs             # 数值单位 / 3.2 语法规则（解析原语）
-    │   ├── unit.rs             # 数值化解析封装（parse_opt_f64 / parse_triplet / parse_vi_points / NA 语义）
-    │   ├── keyword_valid.rs    # 第一步：关键字与多实例标记 + 结构层级合法性校验（数据源 = schema）
-    │   ├── symbol_table_build.rs # 第二步：结构解构与符号表构建（Rebuild + 数值化 → schema::model）
-    │   └── data_valid.rs       # 第三步：validator validate() + 符号引用校验
+    │   ├── pre_process.rs      # 第一步：关键字标记（occurrence / scope_path / spec）+ 作用域解析
+    │   ├── content_parse.rs    # 第二步：content 类型化（值模型来自 schema）→ ParsedNode 树
+    │   └── validation.rs       # 第三步：内容与形状校验 + 诊断模型（Diagnostic / Rule / Severity / ValidationReport）
     └── emitter/
         ├── mod.rs              # 暴露导出接口
-        └── toml.rs             # serialize_ibis_file（schema::model → TOML）
+        └── toml.rs             # serialize_parsed_tree（ParsedNode 树 → TOML）
 ```
 
-> 旧版 backend 的 `semantic.rs` / `symbol.rs` / `reference.rs` / `content.rs` 已废弃，职责并入 `keyword_valid.rs` / `symbol_table_build.rs` / `data_valid.rs`。
+> 旧版 backend 的 `semantic.rs` / `symbol.rs` / `reference.rs` / `content.rs`，以及曾计划的 `ir.rs` / `rules.rs` / `unit.rs` / `keyword_valid.rs` / `symbol_table_build.rs` / `data_valid.rs` / `ibis_structure.rs` / `schema/model.rs` / `schema/keyword_hierarchy.rs` **均不存在于当前仓库**；职责收敛为 `pre_process.rs` / `content_parse.rs` / `validation.rs`。crate 内**没有** `tests/` 目录，测试全部落在各源文件的 `#[cfg(test)]` 模块与根包 `tests/`。
 
 ## 1.3 公共 API
 
-[`lib.rs`](../crates/ibis2ibstoml/src/lib.rs:80) 作为 crate 入口即流水线编排点，对外提供**完整流水线**与**分段暴露**两类 API。
+[`lib.rs`](../crates/ibis2ibstoml/src/lib.rs:45) 作为 crate 入口即流水线编排点，对外提供**完整流水线**与**分段暴露**两类 API。
 
 **完整流水线 API**：
 
 ```rust
-/// Parse IBIS content and produce semantically-typed TOML in a single pass.
-pub fn parse_to_toml(content: &str) -> Result<String, String> {
-    // Phase 1: frontend parsing → AST tree.
+/// Parses IBIS content into the backend's typed parsed tree (strict mode).
+pub fn parse_to_parsed(content: &str) -> Result<Vec<ParsedNode>, String> {
     let tree = frontend::parse(content)?;
-    // Phase 2: backend semantic analysis → numerically-typed IBIS_File.
-    let file = backend::semantic_parse(&tree)?;
-    // Phase 3: emitter serialization → TOML.
-    Ok(emitter::toml::serialize_ibis_file(&file))
+    semantic_parse(&tree).map_err(|error| error.to_string())
 }
 
-/// Read an IBIS file and produce a `.ibs.toml` representation.
-pub fn ibs2ibstoml<P: AsRef<Path>>(path: P) -> Result<String, String> {
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
-    parse_to_toml(&content)
+/// Parses IBIS content and returns the TOML document.
+pub fn parse_to_toml(content: &str) -> Result<String, String> {
+    let parsed = parse_to_parsed(content)?;
+    Ok(emitter::serialize_parsed_tree(&parsed))
 }
 ```
 
 | 入口 | 作用 |
 |------|------|
-| [`parse_to_toml`](../crates/ibis2ibstoml/src/lib.rs:80) | 纯文本 → 语义化 TOML 字符串（三阶段一次完成，严格校验） |
-| [`parse_to_toml_lenient`](../crates/ibis2ibstoml/src/lib.rs:115) | 同 `parse_to_toml`，但校验宽松（问题写入 `ValidationReport`，不阻断转换） |
-| [`ibs2ibstoml`](../crates/ibis2ibstoml/src/lib.rs:113) | 文件级 API，读盘后委托 `parse_to_toml` |
+| [`parse_to_parsed`](../crates/ibis2ibstoml/src/lib.rs:73) | 纯文本 → 类型化解析树（frontend + backend，严格校验） |
+| [`parse_to_parsed_lenient`](../crates/ibis2ibstoml/src/lib.rs:92) | 同 `parse_to_parsed`，但校验宽松（问题写入 `ValidationReport`，不阻断） |
+| [`parse_to_toml`](../crates/ibis2ibstoml/src/lib.rs:124) | 纯文本 → 语义化 TOML 字符串（三阶段一次完成，严格校验） |
+| [`parse_to_toml_lenient`](../crates/ibis2ibstoml/src/lib.rs:140) | 同 `parse_to_toml`，额外返回 `ValidationReport` |
+| [`ibs2ibstoml`](../crates/ibis2ibstoml/src/lib.rs:160) | 文件级 API，读盘后委托 `parse_to_toml` |
 
 **分段暴露（供强类型消费者 / 调试）**：
 
 ```rust
-pub fn parse_to_ast(content: &str) -> Result<Vec<SectionNode>, String>;            // frontend
-pub fn semantic_parse(tree: &[SectionNode]) -> Result<IBIS_File, SemanticError>;   // backend（严格）
+pub fn parse(content: &str) -> Result<Vec<SectionNode>, String>;                    // frontend
+pub fn semantic_parse(tree: &[SectionNode]) -> Result<Vec<ParsedNode>, Diagnostic>; // backend（严格）
 pub fn semantic_parse_lenient(tree: &[SectionNode])
-    -> Result<(IBIS_File, ValidationReport), SemanticError>;                        // backend（宽松）
-pub fn serialize_ibis_file(file: &IBIS_File) -> String;                            // emitter
+    -> Result<(Vec<ParsedNode>, ValidationReport), Diagnostic>;                     // backend（宽松）
+pub fn serialize_parsed_tree(nodes: &[ParsedNode]) -> String;                       // emitter
 ```
 
 | 分段入口 | 所属阶段 | 作用 |
 |----------|----------|------|
-| [`parse_to_ast`](../crates/ibis2ibstoml/src/lib.rs:139) | frontend | IBIS 文本 → `SectionNode` 树 |
-| [`semantic_parse`](../crates/ibis2ibstoml/src/backend/mod.rs) | backend | `SectionNode` 树 → 数值化强类型 `IBIS_File`（严格：首个错误即返回） |
-| [`semantic_parse_lenient`](../crates/ibis2ibstoml/src/backend/mod.rs) | backend | `SectionNode` 树 → 数值化强类型 `IBIS_File` + `ValidationReport`（宽松：记录问题不阻断） |
-| [`serialize_ibis_file`](../crates/ibis2ibstoml/src/emitter/toml.rs) | emitter | 强类型 `IBIS_File` → TOML 字符串 |
+| [`frontend::parse`](../crates/ibis2ibstoml/src/frontend/mod.rs:75) | frontend | IBIS 文本 → `SectionNode` 树 |
+| [`backend::semantic_parse`](../crates/ibis2ibstoml/src/backend/mod.rs:76) | backend | `SectionNode` 树 → 类型化解析树 `Vec<ParsedNode>`（严格：首个 `Severity::Error` 即返回） |
+| [`backend::semantic_parse_lenient`](../crates/ibis2ibstoml/src/backend/mod.rs:99) | backend | `SectionNode` 树 → `Vec<ParsedNode>` + `ValidationReport`（宽松：收集全部问题，当前恒成功） |
+| [`emitter::serialize_parsed_tree`](../crates/ibis2ibstoml/src/emitter/toml.rs:63) | emitter | `Vec<ParsedNode>` → TOML 字符串 |
 
-模块导出：`pub mod backend; pub mod emitter; pub mod frontend;`
+模块导出：`pub mod backend; pub mod emitter; pub mod frontend; pub mod schema;`；crate 根 re-export `semantic_parse` / `semantic_parse_lenient` / `Corner` / `Diagnostic` / `ParsedField` / `ParsedNode` / `ParsedTable` / `ParsedValue` / `Rule` / `Severity` / `ValidationReport` / `SectionNode`。
+
+> `Rule` 现在**只剩一个**：`ibis2ibstoml::backend::Rule`（crate 根同名），即**诊断规则枚举**（`UnknownKeyword` / `MissingRequiredKeyword` / `InvalidFormat`）。frontend 曾有的 pest 规则枚举 `frontend::Rule` 已随 pest 弃用而删除，keyword 级别改由整数 `ParsedBlock.level` 表达（见 §2.3）。
 
 ## 1.4 数据流总览
 
@@ -202,13 +192,13 @@ flowchart TD
     SYN -->|成功| AST[frontend ast_builder 建树]
     SYN -->|失败 逐行回退| AST
     AST --> TREE[/SectionNode 树/]
-    TREE --> V1[backend keyword_valid 关键字与多实例标记]
-    V1 --> MARK[/KeywordMark 标记 + 结构校验/]
-    MARK --> V2[backend symbol_table_build 结构解构与符号表构建]
-    V2 --> IBIS[/IBIS_File 数值化强类型 + 符号表/]
-    IBIS --> V3[backend data_valid 物理与逻辑校验]
-    V3 --> OUT[/IBIS_File + ValidationReport/]
-    OUT --> TOM[emitter toml 序列化]
+    TREE --> P1[backend pre_process 关键字标记]
+    P1 --> MARK[/KeywordMark 标记/]
+    MARK --> P2[backend content_parse content 类型化]
+    P2 --> PARSED[/ParsedNode 类型化解析树/]
+    PARSED --> P3[backend validation 内容与形状校验]
+    P3 --> OUT[/ParsedNode + ValidationReport/]
+    OUT --> TOM[emitter serialize_parsed_tree]
     TOM --> OUTT[/TOML 字符串 含 array-of-tables/]
 ```
 
@@ -216,13 +206,13 @@ flowchart TD
 
 | 阶段 | 职责 | 不承担 |
 |------|------|--------|
-| frontend | 文本 → `SectionNode` 树（全部值保留原始字符串） | 不做语义分析、数值转换、`[[...]]` 区分 |
-| backend | 树 → 数值化强类型 `IBIS_File`；按三步走做标记 / 重建 / 校验 | 不做文本解析（复用 frontend 树）；不做 TOML 序列化 |
-| emitter | 强类型 → TOML（含 `[[...]]`） | 不做语义处理、不解析文本 |
+| frontend | 文本 → `SectionNode` 树（全部值保留原始字符串） | 不做语义分析、类型化、`[[...]]` 区分 |
+| backend | 树 → 类型化解析树 `ParsedNode`；按三步走做标记 / 类型化 / 校验 | 不做文本解析（复用 frontend 树）；不做 TOML 序列化 |
+| emitter | 解析树 → TOML（含 `[[...]]`） | 不做语义处理、不解析文本 |
 
-> backend 内部三步走：第一步 `keyword_valid`（关键字与多实例标记 + 结构层级校验）→ 第二步 `symbol_table_build`（结构解构与符号表构建，数值化）→ 第三步 `data_valid`（物理与逻辑数据校验）。严格模式任一处出错即返回；宽松模式把问题写入 `ValidationReport` 后继续。
+> backend 内部三步走：第一步 `pre_process`（关键字标记 + 作用域解析）→ 第二步 `content_parse`（content 类型化）→ 第三步 `validation`（内容与形状校验）。严格模式取报告中首个 `Severity::Error` 返回 `Err`；宽松模式把问题整体写入 `ValidationReport` 后继续。
 
-**边界原则**：阶段间通过公共 API 通信；backend 只读 frontend 产出的 `SectionNode` 树与 `Rule` 枚举，禁止反向引用 frontend 内部类型；emitter 只消费强类型，不接触 `SectionNode` 树。
+**边界原则**：阶段间通过公共 API 通信；backend 只读 frontend 产出的 `SectionNode` 树，禁止反向引用 frontend 内部类型；emitter 只消费类型化解析树，不接触 `SectionNode` 树。
 
 ---
 
@@ -230,7 +220,7 @@ flowchart TD
 
 ## 2.1 模块设计思路
 
-`frontend` 是流水线的第一段：读入 IBIS 文本，输出 [`SectionNode`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:17) 树。
+`frontend` 是流水线的第一段：读入 IBIS 文本，输出 [`SectionNode`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:32) 树。
 
 **划分思路**：按「读取 → 分组 → 建树」三段式组织为三个文件——`lexical_analysis` 只负责**读取**，`syntax_analysis` 只负责**分组**（折叠为扁平块列表，含容错回退），`ast_builder` 只负责**建树**（扁平块 → 层级树）。三个文件在 [`mod.rs`](../crates/ibis2ibstoml/src/frontend/mod.rs:28) 中声明为私有子模块，由 `parse` 按顺序编排调用；各阶段能力以模块内普通函数暴露，不引入 trait / carrier 抽象。
 
@@ -241,40 +231,38 @@ flowchart LR
     LEX --> SYN[syntax_analysis 语法]
     SYN --> AST[ast_builder 建树]
     AST --> OUT[/SectionNode 树/]
-    PEST[ibis.pest 语法] -. 词法匹配 .-> LEX
-    PEST -. 结构分组 .-> SYN
+    SCHEMA[ibis_schema.toml 唯一结构源] -. find_level 定级 .-> SYN
+    SCHEMA -. 文件头字段判定 .-> AST
 ```
 
-**时机门控**：`parse` 先尝试 pest 全量解析（主路径：lexical → syntax → ast）；失败时由 `syntax_analysis` 内部逐行回退，两条路径复用同一批词法/语法原语与同一 AST 构建器，保证行为一致。
+**单一路径**：`parse` 只走一条链路（lexical → syntax → ast）。语法阶段逐行扫描，遇到 `[Keyword]` 即开新块，并用 `find_level` 从 schema 取该 keyword 的嵌套级别；分组是逐行全量的，**永不失败**，因此不存在需要与之保持同步的第二条解析路径。
 
 > 各文件的职责与关键能力见 2.2 模块结构；具体函数与调用细节见源码注释。
 
 ## 2.2 模块结构
 
-三个文件在 [`mod.rs`](../crates/ibis2ibstoml/src/frontend/mod.rs:28) 中声明为私有子模块，仅通过 `pub fn parse` 暴露能力；跨阶段被消费的函数以 `pub use` / `pub(crate) use` re-export 到阶段顶层。
+三个文件在 [`mod.rs`](../crates/ibis2ibstoml/src/frontend/mod.rs:28) 中声明为私有子模块，仅通过 `pub fn parse` 暴露能力；跨阶段被消费的函数与类型以 `pub use` / `pub(crate) use` re-export 到阶段顶层。
 
 ```text
 src/frontend/
 ├── mod.rs              # 编排入口 parse：IBIS 文本 → SectionNode 树
 ├── lexical_analysis.rs # 词法阶段（grammar / parser / extraction 子模块）
 ├── syntax_analysis.rs  # 语法阶段（line_type / block_grouping 子模块，含 recovery）
-├── ast_builder.rs      # AST 阶段（ast_types / header_field / tree_builder 子模块）
-└── ibis.pest           # pest 语法文件
+└── ast_builder.rs      # AST 阶段（ast_types / header_field / tree_builder 子模块）
 ```
 
 | 文件 | 职责 | 关键能力 |
 |------|------|----------|
-| [`mod.rs`](../crates/ibis2ibstoml/src/frontend/mod.rs:28) | 编排 `parse`：按词法 → 语法 → 建树顺序调用各文件，对外 re-export 公共类型 | `parse`、`NodeKind` / `SectionNode` / `ParsedBlock` / `Rule` |
-| [`lexical_analysis.rs`](../crates/ibis2ibstoml/src/frontend/lexical_analysis.rs) | 词法阶段：绑定 [`ibis.pest`](../crates/ibis2ibstoml/src/frontend/ibis.pest) 语法生成 `Rule` / `IbisParser`，提供关键词名与内容行的读取原语，并适配到 pest pair 供各阶段共用 | `IbisParser`、`Rule`、`keyword_name`、`parse_content_line`、`extract_keyword_name`、`extract_line_content` |
-| [`syntax_analysis.rs`](../crates/ibis2ibstoml/src/frontend/syntax_analysis.rs) | 语法阶段：分类行角色（`\|` 续行/注释），把输入折叠为扁平 `ParsedBlock` 列表；主路径消费 pest pairs，失败时逐行回退 | `group_pairs_to_blocks`、`recover_blocks`、`is_continuation_line` |
-| [`ast_builder.rs`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs) | AST 阶段：定义 AST 数据结构，识别文件头字段（大小写不敏感），把扁平块递归建为层级树 | `NodeKind` / `SectionNode` / `ParsedBlock`、`build_section_tree`、`is_header_field_keyword` |
-| [`ibis.pest`](../crates/ibis2ibstoml/src/frontend/ibis.pest) | pest 语法文件：定义词法原语（`si_number` 等）与关键词规则，仅供 `lexical_analysis` 绑定 | 词法 / 语法规则定义 |
+| [`mod.rs`](../crates/ibis2ibstoml/src/frontend/mod.rs:28) | 编排 `parse`：按词法 → 语法 → 建树顺序调用各文件，对外 re-export 公共类型 | `parse`、`NodeKind` / `SectionNode` / `ParsedBlock` |
+| [`lexical_analysis.rs`](../crates/ibis2ibstoml/src/frontend/lexical_analysis.rs:1) | 词法阶段：提供关键词名与内容行的纯字符串读取原语 | `keyword_name`、`parse_content_line` |
+| [`syntax_analysis.rs`](../crates/ibis2ibstoml/src/frontend/syntax_analysis.rs:1) | 语法阶段：分类行角色（`\|` 续行/注释），把输入逐行折叠为扁平 `ParsedBlock` 列表，并用 `find_level` 从 schema 定级 | `group_lines_to_blocks`、`classify_block_level`、`is_continuation_line` |
+| [`ast_builder.rs`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:1) | AST 阶段：定义 AST 数据结构与 `keyword_level` 常量，识别文件头字段（大小写不敏感，集合来自 schema），按整数级别把扁平块递归建为层级树 | `keyword_level`、`NodeKind` / `SectionNode` / `ParsedBlock`、`build_section_tree`、`is_header_field_keyword` |
 
 > 各文件内部子模块（`grammar` / `parser` / `extraction` / `line_type` / `block_grouping` / `ast_types` / `header_field` / `tree_builder`）的组成与可见性、`parse` 编排的调用细节见源码注释。
 
 ## 2.3 数据结构
 
-定义于 [`ast_builder::ast_types`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs)：
+定义于 [`ast_builder::ast_types`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:17)：
 
 ```rust
 /// Role of a section node in the TOML output.
@@ -287,28 +275,29 @@ pub enum NodeKind {
 /// A node in the hierarchical IBIS section tree.
 #[derive(Debug, Clone)]
 pub struct SectionNode {
-    pub keyword: String,       // Keyword name (e.g., "Component", "IBIS ver", "Pin").
-    pub kind: NodeKind,        // Role determining TOML output format.
-    pub content: Vec<String>,  // Content lines belonging directly to this section.
-    pub line_number: usize,    // 1-based source line of the section header (for diagnostics).
+    pub keyword: String,            // Keyword name (e.g., "Component", "IBIS ver", "Pin").
+    pub kind: NodeKind,             // Role determining TOML output format.
+    pub content: Vec<String>,       // Content lines belonging directly to this section.
     pub children: Vec<SectionNode>, // Child sections nested under this node.
 }
 
 /// A parsed keyword block with its content lines.
 #[derive(Debug, Clone)]
 pub struct ParsedBlock {
-    pub keyword: String,   // Raw keyword name (e.g., "Component", "IBIS ver", "Package").
-    pub rule: Rule,        // Pest rule variant that matched this keyword header.
+    pub keyword: String,      // Raw keyword name (e.g., "Component", "IBIS ver", "Package").
+    pub level: usize,         // Nesting level read from the schema (TERMINATOR 0 / ROOT 1 / SECOND_LEVEL 2 ...).
     pub content: Vec<String>, // Content lines belonging to this block.
-    pub line_number: usize,   // 1-based source line of the keyword header (for diagnostics).
 }
 ```
 
 **设计要点**：
 
-- `NodeKind` 仅区分 `FileHeader`（虚拟容器）与 `Regular`——`[[array-of-tables]]` 与 `[...]` 的区分**由 backend 的强类型化隐式决定**（`Vec` / `IndexMap` 字段序列化为 `[[...]]`）
-- `FileHeader` 虚拟父节点在[树构建 Phase A](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:103) 收集所有连续文件头字段
-- 文件头字段判定（[`header_field`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:49)）在 **Rust 端**维护已知关键词集合 + **大小写不敏感**匹配
+- `NodeKind` 仅区分 `FileHeader`（虚拟容器）与 `Regular`——`[[array-of-tables]]` 与 `[...]` 的区分**由 backend 的 `occurrence` 决定**（见 §3.3）
+- `ParsedBlock.level` 是**从 schema 读出的整数深度**（[`find_level`](../crates/ibis2ibstoml/src/schema/mod.rs:298)）：`0` = `[End]` 终止符，`1` = 顶层节段（`Component` / `Model` …），`2` = 二级节段（`Component.Manufacturer` / `Component.Package` …），`N` = 更深的节段。三者同属「深度 N」一个家族——建树时只分支 `TERMINATOR` 与 `ROOT`，**其余所有 level（2、3、4…）一律按子节段处理**
+- schema 树中没有登记的 keyword（如 `virtex5.ibs` 的 `[R Series]`）按二级节段（`keyword_level::SECOND_LEVEL`）处理——它直接挂在所出现的顶层节段之下，与 `Component.Manufacturer` 同级
+- `FileHeader` 虚拟父节点在[树构建 Phase A](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:105) 收集所有连续文件头字段
+- 文件头字段判定（[`is_header_field_keyword`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:58)）的**已知集合来自 schema 的 `File_Header` 容器 `fields`**（不再在 Rust 端硬编码），匹配经 `normalize_keyword` **大小写不敏感**
+- AST **不携带行号**：`SectionNode` / `ParsedBlock` 均无 `line_number` 字段，因此诊断只给出作用域路径（见 §3.4）
 
 ## 2.4 输入输出
 
@@ -318,7 +307,7 @@ pub struct ParsedBlock {
 |----|------|
 | 输入 | `content: &str` — IBIS 文件的完整文本 |
 | 输出 | `Ok(Vec<SectionNode>)` — 根级 AST，包含 `[File_Header]` 虚拟节点 |
-| 错误 | `Err(String)` — 人类可读错误消息；容错回退路径保证解析尽量成功 |
+| 错误 | `Err(String)` — 人类可读错误消息；**当前实现恒返回 `Ok`**（分组是逐行全量的，不会失败） |
 
 ```rust
 pub fn parse(content: &str) -> Result<Vec<SectionNode>, String>
@@ -334,306 +323,255 @@ pub fn parse(content: &str) -> Result<Vec<SectionNode>, String>
 
 ## 3.1 模块设计思路
 
-`backend` 是流水线的**语义层**：消费 frontend 产出的 [`SectionNode`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs) 树，产出**数值化强类型领域模型** [`IBIS_File`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1)。沿用 frontend「模块内普通函数」风格，不引入 trait / carrier 抽象。
+`backend` 是流水线的**语义层**：消费 frontend 产出的 [`SectionNode`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:32) AST 树（**frontend 的输出保持不变**，backend 只读、不回写），产出两样东西——**类型化解析树**（[`ParsedNode`](../crates/ibis2ibstoml/src/backend/content_parse.rs:142)）与**诊断报告**（[`ValidationReport`](../crates/ibis2ibstoml/src/backend/validation.rs:144)）。沿用「模块内普通函数」风格，不引入 trait / carrier 抽象。
 
-**两条核心设计原则**（backend 推导重来的基石）：
+**三条设计原则**：
 
-1. **Rebuild 而非原地修改（In-place）**：AST 是一次性语法结构，backend **只读解构**它，不保留、不原地改写。第二步 `symbol_table_build` 将通用的 `content` 文本行**彻底解析并剥离**，重新构建为干净、强类型的领域模型与符号表。
-2. **零字符串污染**：进入 backend 后，所有带工程单位的文本（`1.12p`、`10mA`、`3.3V`、`1.9/597p`）**必须**解析为标准浮点数（`f64`）；IV/VT 曲线解析为结构化 [`Vec<ViPoint>`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1)。字符串仅保留在标识符类字段（`model_name` / `signal_name` / 文件名）与非数值文本字段（`Model_type` / `Polarity` / `Notes` 等）。
+1. **AST 只读，解析树重建**：AST 仅作语法结构；backend 只读解构、不回写，并重建为干净的类型化解析树（`ParsedNode` 与 AST **树形同构**：保父子、保兄弟顺序）。重建时 keyword 与 occurrence 被**规范化**（schema 规范名 + `Once` / `Multiple`），schema 不认识的 keyword 保留原文并记一条诊断。
+2. **schema 驱动**：keyword 层级、单例 / 多实例、必填、正文形态（`__schema__.format`）、关键字行形态（`__header__.format`）与具名参数类型（`__param__`）全部来自 [`ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1)（唯一结构规范）；内容形态判定 = schema 占位字段 + 值形状启发式。
+3. **文本保真**：backend **不做任何数值归一化**——带单位文本原样保留（`1.65V` → `Text("1.65V")`），角点保留三个原文元素，表 cell 保留原文。数值只在校验时被**读取**（[`split_number_unit`](../crates/ibis2ibstoml/src/backend/content_parse.rs:501)）用于形状判断，绝不写回或缩放。`NA` / 空 token 视为**缺失**。
 
-**划分思路**：backend 内部按**三步走流水线**组织，各阶段以 `ibis_structure.rs` 登记的强类型与 `keyword.rs` 注册表、`spec.rs` 规范中心为数据源：
+**三步走流水线**（数据源：`ibis_schema.toml` 结构规范 + 各阶段的解析原语）：
 
-1. **第一步 `keyword_valid`** — 关键字与多实例标记：遍历 AST 树，识别并标记哪些关键字是**单例**（如 `File_Header`、`Ramp`），哪些是**多实例**关键字（如 `[Model]`、`[Pin]`），并对照 [`KEYWORD_REGISTRY`](../crates/ibis2ibstoml/src/backend/keyword.rs:314) 对结构层级做**初步合法性校验**（父子嵌套关系是否正确）。
-2. **第二步 `symbol_table_build`** — 结构解构与符号表构建：消费 AST 树，将通用的 `content` 文本行彻底解析并剥离，构建结构化的强类型数据结构并填充至符号表：
-   - **Component / Pin 映射**：将 `[Pin]` 列表解析为强类型 `Vec<PinInfo>`；
-   - **Model 符号表**：构建 `IndexMap<String, IBIS_Model>`，Key 为 `model_name`；
-   - **IV/VT 曲线**：将 `[Pulldown]`、`[Pullup]` 等表格文本解析为结构化的 `Vec<ViPoint>`（`voltage` / `i_typ` / `i_min` / `i_max`）。
-3. **第三步 `data_valid`** — 物理与逻辑数据校验：针对已构建好的强类型符号表与结构体执行业务 / 物理规则校验：
-   - **单调性校验**：IV 曲线电压是否**严格单调递增**；
-   - **范围校验**：$V_{min} \le V_{typ} \le V_{max}$；
-   - **符号引用检查**：`[Component]` 中 `PinInfo` 引用的 `model_name` 是否在 `[Model]` 符号表中真实存在。
+1. **第一步 [`pre_process`](../crates/ibis2ibstoml/src/backend/pre_process.rs:1)** — 关键字标记：前序遍历 AST，为每个节点标注 schema 规范名、`Occurrence`、`scope_path` 与所属 [`SectionSpec`](../crates/ibis2ibstoml/src/schema/mod.rs:126)，产出 [`KeywordMark`](../crates/ibis2ibstoml/src/backend/pre_process.rs:33) 列表；schema 不认识的 keyword 记为 `UnknownKeyword` 诊断（不中断）。
+2. **第二步 [`content_parse`](../crates/ibis2ibstoml/src/backend/content_parse.rs:307)** — 内容类型化：消费 AST 与 marks（共享同一前序游标），按 `format` 分派正文解析器，把每行 `content` 变成类型化字段，产出 `ParsedNode` 树。
+3. **第三步 [`validation`](../crates/ibis2ibstoml/src/backend/validation.rs:1)** — 内容与形状校验，全部在**解析树**上执行：依赖必填（`Rule::MissingRequiredKeyword`，Error）与参数形状（`Rule::InvalidFormat`，Warning）。
 
 ```mermaid
 flowchart LR
-    IN[/SectionNode 树/] --> V1[keyword_valid 第一步 关键字与多实例标记]
-    V1 --> MARK[/KeywordMark 标记/]
-    MARK --> V2[symbol_table_build 第二步 结构解构与符号表构建]
-    V2 --> IBIS[/IBIS_File 数值化强类型 + 符号表/]
-    IBIS --> V3[data_valid 第三步 物理与逻辑校验]
-    V3 --> OUT[/IBIS_File + ValidationReport/]
-    REG[keyword.rs 注册表] -. 单例 多实例 父子作用域 .-> V1
-    SPEC[spec.rs 规范中心 + unit.rs 数值化] -. 单位 曲线 解析 .-> V2
-    IBIS -. 强类型数据 .-> V3
+    IN[/SectionNode AST 树/] --> P1[pre_process 第一步 关键字标记]
+    P1 --> MARK[/KeywordMark 标记/]
+    MARK --> P2[content_parse 第二步 content 类型化]
+    P2 --> PARSED[/ParsedNode 类型化解析树/]
+    PARSED --> P3[validation 第三步 内容与形状校验]
+    P3 --> OUT[/ParsedNode + ValidationReport/]
+    OUT --> EM[emitter 直接消费解析树]
+    EM --> TOML[ibis.toml]
+    SC[ibis_schema.toml] -. 层级 单例 多实例 必填 .-> P1
+    SC -. format header_format param .-> P2
+    SC -. 数量列 角点形状 .-> P3
 ```
 
-**数值化解析**（零字符串污染的实现核心）：
+**内容类型化细节**（`content_parse` 内部）：
 
-- [`spec.rs`](../crates/ibis2ibstoml/src/backend/spec.rs:55) 的 `NumberSpec::parse_si_number` 由旧版「仅校验用」**提升为构建期解析器**：第二步 `symbol_table_build` 在填充强类型字段时即完成数值解析，不再以字符串承载。
-- 新增 [`unit.rs`](../crates/ibis2ibstoml/src/backend/unit.rs:1) 封装数值化原语（见 3.3 数据结构）：
-  - `parse_opt_f64` — 空 / `NA` → `None`，否则 `parse_si_number` → `Some(f64)`；
-  - `parse_triplet` — 角点三元组数值化（`Triplet<f64>`）；
-  - `parse_vi_points` — IV 曲线行 → `Vec<ViPoint>`。
-- `ValueKind::Ratio`（如 Ramp 的 `dv/dt_r 1.9/597p`）继续由 `spec.rs` 支持，构建期换算为 `f64`。
+- **决策顺序「内容驱动优先，schema 辅助」**：schema 说明有哪些 param、每个 param 消耗几个 token；**文本形状**决定 keyword 自身值是什么。`__header__.format` 只是弱提示——真实文件常与之不符。
+- **表列名解析顺序**：`IV-table` 固定列名 → 声明的 `__param__` 列（schema 优先）→ keyword 行列名 → 首行内容列名 → 无列名（`header = []`）。手册未命名、数据行却存在的前导列统一由 schema 记为 `col0`（`[Pin]`、`[Diff Pin]`、`[Pin Mapping]`…）。
+- **未匹配内容不丢**：未被任何声明消费的行汇入 `lines` 字段（[`UNMATCHED_LINES_KEY`](../crates/ibis2ibstoml/src/backend/content_parse.rs:90)）；具名 param 多余的 token 也回落到 `lines`。`NA` / 空值不产生值。
+- **行内注释**：`collect_content_lines` 按 `|` 截断行内注释后取非空行，注释列名因此不可用。
 
-**校验策略**（三步走、严格 / 宽松双模式）：
-
-| 阶段 | 校验项 | 策略（严格 / 宽松） |
-|------|--------|------|
-| 第一步 标记 | 未知 keyword / 父子作用域外 | 严格报错；宽松记入 report |
-| 第二步 重建 | 必填缺失、单次违例、数值解析失败（`InvalidNumber`） | 严格报错；宽松以 `None` 占位并记入 report |
-| 第三步 校验 | 曲线单调性、$V_{min}\le V_{typ}\le V_{max}$ 范围、符号引用 | 严格报错；宽松记入 report |
-
-严格模式（`semantic_parse`）首个错误即返回 `Err(SemanticError)`；宽松模式（`semantic_parse_lenient`）把问题写入 `ValidationReport`（errors + warnings），不阻断转换。
+**校验策略**（严格 / 宽松双模式）：`semantic_parse` 取报告中首个 `Severity::Error` 返回 `Err(Diagnostic)`；`semantic_parse_lenient` 将问题整体写入 `ValidationReport`（errors + warnings），不阻断转换。
 
 ## 3.2 模块结构
 
 ```text
 src/backend/
-├── mod.rs                # 编排入口 semantic_parse（严格）/ semantic_parse_lenient（宽松），三步走接线
-├── spec.rs               # 数值单位 / 3.2 语法规则（解析原语）
-├── unit.rs               # 数值化解析封装（NA 语义 / 三元组 / IV 曲线 → Vec<ViPoint>）
-├── keyword_valid.rs      # 第一步：关键字与多实例标记 + 结构层级合法性校验（数据源 = schema）
-├── symbol_table_build.rs # 第二步：结构解构与符号表构建（Rebuild + 数值化 → schema::model）
-└── data_valid.rs         # 第三步：validator validate() + 符号引用校验
+├── mod.rs             # 编排 semantic_parse / semantic_parse_lenient（run_backend：pre_process → content_parse → validation）
+├── pre_process.rs     # 第一步：关键字标记与作用域解析（KeywordMark / mark_keywords / resolve_spec）
+├── content_parse.rs   # 第二步：content → 类型化字段（ParsedNode 及值类型；parse_format / parse_value / helper 子模块）
+└── validation.rs      # 第三步：内容与形状校验 + 诊断模型（diagnostics / valid_kw_tree / valid_param 子模块）
 ```
 
 | 模块 | 职责 | 关键能力 |
 |------|------|----------|
-| [`mod.rs`](../crates/ibis2ibstoml/src/backend/mod.rs:1) | 编排三步走，暴露公共入口与错误类型 | `semantic_parse`、`semantic_parse_lenient`、`SemanticError`、`ValidationReport` |
-| [`schema/mod.rs`](../crates/ibis2ibstoml/src/schema/mod.rs:1) | 加载 ibis_schema.toml → SectionSpec 树 + 辅助 | `load_schema`、`normalize_keyword`、`find_root`、`find_child` |
-| [`schema/ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1) | IBIS 7.0 结构（**唯一规范数据源**，抄手册格式） | keyword 树 + 同名 section + 字段类型（空类型 `"()"`） |
-| [`schema/model.rs`](../crates/ibis2ibstoml/src/schema/model.rs:1) | 数值化强类型结构体 + validator 声明式校验 | `IBISFile`、`IBISModel`、`IBISCornerValue`、`IBISTableData`、`validate_*` |
-| [`spec.rs`](../crates/ibis2ibstoml/src/backend/spec.rs:1) | 数值单位 / 3.2 语法规则（解析原语） | `NumberSpec`、`SyntaxRules`、`SCALING_FACTORS` |
-| [`unit.rs`](../crates/ibis2ibstoml/src/backend/unit.rs:1) | 数值化解析封装（构建期零字符串污染的实现层） | `parse_opt_f64`、`parse_triplet`、`parse_vi_points`、NA 语义 |
-| [`keyword_valid.rs`](../crates/ibis2ibstoml/src/backend/keyword_valid.rs:1) | 第一步：关键字与多实例标记 + 结构层级校验 | `keyword_valid`、`KeywordMark`、`OccurrenceMark` |
-| [`symbol_table_build.rs`](../crates/ibis2ibstoml/src/backend/symbol_table_build.rs:1) | 第二步：结构解构与符号表构建（Rebuild + 数值化 → schema::model） | `symbol_table_build`、`build_component`、`build_model`、`build_vi_points` |
-| [`data_valid.rs`](../crates/ibis2ibstoml/src/backend/data_valid.rs:1) | 第三步：validator 声明式校验 + 符号引用 | 对 `IBISFile.validate()`、递归 `ValidationErrors`、`ReferenceNotFound` |
+| [`mod.rs`](../crates/ibis2ibstoml/src/backend/mod.rs:44) | 编排三步走，暴露公共入口并 re-export 类型化树与诊断类型 | `semantic_parse`、`semantic_parse_lenient`、`run_backend` |
+| [`pre_process.rs`](../crates/ibis2ibstoml/src/backend/pre_process.rs:51) | 第一步：单例 / 多实例标记 + 作用域路径 + schema spec | `mark_keywords`、`KeywordMark`、`resolve_spec`、`find_section_anywhere` |
+| [`content_parse.rs`](../crates/ibis2ibstoml/src/backend/content_parse.rs:307) | 第二步：content 类型化，产出解析树（值模型定义在 `schema`，此处只 re-export） | `content_parse`、`NodeParser`、`ParsedNode`、`ParamCollector` |
+| [`content_parse::parse_format`](../crates/ibis2ibstoml/src/backend/content_parse.rs:326) | 正文形态分派（`format` → 正文解析器） | `parse_file_header_body`、`parse_text_body`、`parse_table_body`、`parse_vt_table_body` |
+| [`content_parse::parse_value`](../crates/ibis2ibstoml/src/backend/content_parse.rs:480) | 值类型读取（`param_type` → `ParsedValue`） | `parse_param_value`、`parse_self_value`、`split_number_unit`、`is_quantity_token`、`is_missing_token` |
+| [`content_parse::helper`](../crates/ibis2ibstoml/src/backend/content_parse.rs:662) | 平铺工具（行 / token / 表 / 字段） | `collect_content_lines`、`split_tokens`、`split_field_line`、`split_header_line`、`resolve_table_header_and_rows` |
+| [`validation.rs`](../crates/ibis2ibstoml/src/backend/validation.rs:208) | 第三步：在解析树上做内容与形状校验 | `validate`、`validate_keyword_tree`、`validate_parameters` |
+| [`validation::diagnostics`](../crates/ibis2ibstoml/src/backend/validation.rs:66) | 诊断模型 | `Severity`、`Rule`、`Diagnostic`、`ValidationReport`、`ValidationCollector` |
+| [`schema/mod.rs`](../crates/ibis2ibstoml/src/schema/mod.rs:1) | 薄编排：声明 `spec` / `loader` / `lookup` 并 re-export 公共名称 | `pub use lookup::{...}`、`pub use spec::{...}` |
+| [`schema/spec.rs`](../crates/ibis2ibstoml/src/schema/spec.rs:1) | 语义层与语法层 | `types`（节段与参数类型 + 值模型 `Corner` / `ParsedTable` / `ParsedValue` / `ParsedField` + 固定词汇 `keyword_level` / `FILE_HEADER_CONTAINER` / `TERMINATOR_KEYWORD` / `UNMATCHED_LINES_KEY` / `IV_COLUMN_NAMES` / `VT_COLUMN_NAMES` / `CORNER_NAMES`；每个元数据枚举自带 `ALL` 与 `from_schema_str` 与 `as_schema_str`）、`naming`（`is_metadata_key` / `normalize_keyword` / `to_snake_key`） |
+| [`schema/loader.rs`](../crates/ibis2ibstoml/src/schema/loader.rs:1) | `ibis_schema.toml` → 缓存 `SectionSpec` 树 | `cache`（`tables` / `build_tables`）、`section`（`split_section_value` / `build_section` / `read_*`）、`decode`（`parse_*`） |
+| [`schema/lookup.rs`](../crates/ibis2ibstoml/src/schema/lookup.rs:1) | 查询原语 | `schema`（`load_schema` / `file_header_section`）、`keyword`（`find_root` / `find_level` / `find_child` / `find_descendant`）、`param`（`find_field`） |
+| [`schema/ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1) | IBIS 7.0 结构（唯一规范数据源） | keyword 树 + 同名 section + `__schema__` / `__header__` / `__param__` |
+| [`plans/legacy/ibis.pest`](legacy/ibis.pest:1) | 已归档的 pest 语法（**仅供参考，不参与编译**） | 历史遗存，勿重新接入构建 |
 
-> 旧版 `semantic.rs`（声明式映射引擎）、`symbol.rs`（符号表 + 作用域）、`reference.rs`（引用校验）、`content.rs`（内容检查）**已废弃删除**；`ibis_structure.rs` 与 `keyword.rs` 已废弃，强类型模型迁入 `schema/model.rs`，keyword 作用域树迁入 `schema/ibis_schema.toml`；`spec.rs` 保留为解析原语。
+**要点**：
+
+- `pre_process` 的 marks 与 `content_parse` 的遍历**共享同一前序游标**，逐节点对齐消费：`NodeParser::parse` 优先采用 mark 的 spec，故 keyword 解析只做一次。
+- **schema 是唯一语义来源**：值模型（`Corner` / `ParsedTable` / `ParsedValue` / `ParsedField`）与一切固定词汇（层级、容器名、终止符、固定列名）都定义在 `schema::spec`；frontend / backend / emitter 一律导入，不自行定义。
+- backend **不定义任何 IBIS 领域强类型模型**：它只定义解析器（`NodeParser` / `ParamCollector`）、文档树节点 `ParsedNode` 与诊断模型，值模型仅由 `backend` re-export；keyword 不反向影响数据结构。
+- schema 查找有**三层容错**：父作用域 → 后代 → 全局。因为 frontend 只对顶层节段（`level == ROOT`）递归，三级节段在 AST 中会被摊平为二级兄弟，故 [`resolve_spec`](../crates/ibis2ibstoml/src/backend/pre_process.rs:66) 提供 child → descendant → anywhere 回退（歧义名取 schema 顺序首个匹配，属已知限制）。
 
 ## 3.3 数据结构
 
-**核心领域模型**（定义于 [`ibis_structure.rs`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1)，零字符串污染——所有电气量均为 `f64`；类型命名沿用旧版）：
+**AST 输入**：frontend 的 [`SectionNode`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:32)（见 §2.3）。
+
+**类型化解析树**（值类型定义于 [`schema/spec.rs`](../crates/ibis2ibstoml/src/schema/spec.rs:1) 并由 `backend` re-export，节点类型 `ParsedNode` 仍在 [`content_parse.rs`](../crates/ibis2ibstoml/src/backend/content_parse.rs:88)；backend 唯一产物，emitter 直接消费）：
 
 ```rust
-/// 角点三元组（数值化）：typ / min / max 均解析为 f64；NA 或缺失 → None。
-pub struct Triplet<T> {
-    pub typ: T,
-    pub min: Option<T>,
-    pub max: Option<T>,
-}
-/// 数值化角点别名：`3.3V 2.0V 3.6V` → Triplet { typ: 3.3, min: Some(2.0), max: Some(3.6) }。
-pub type IBIS_CornerValue = Triplet<f64>;
+/// A corner triple in IBIS order: typical, minimum, maximum.
+/// Each element keeps the original text; an absent or `NA` element is an empty string.
+pub struct Corner(pub String, pub String, pub String);
 
-/// I-V / V-T 曲线数据点（[Pulldown] / [Pullup] / [GND Clamp] / [Power Clamp] 等）。
-///
-/// 每行 4 列 `voltage i_typ i_min i_max` → 一个 ViPoint；`NA` 电流列 → None。
-pub struct ViPoint {
-    pub voltage: f64,
-    pub i_typ: f64,
-    pub i_min: Option<f64>,
-    pub i_max: Option<f64>,
+/// A row-oriented table: the column names plus the data rows.
+pub struct ParsedTable {
+    pub header: Vec<String>,     // Column names; inferred from text when the schema declares none.
+    pub data: Vec<Vec<String>>,  // Cell text in column order; a short row means trailing cells were absent.
 }
 
-/// [Pin] 行（强类型）。
-pub struct PinInfo {
-    pub pin_name: String,       // 标识符 → String
-    pub signal_name: String,    // 标识符 → String
-    pub model_name: String,     // 标识符 → String（符号表引用 key）
-    pub r_pin: Option<f64>,     // 数值化：`1.2` → Some(1.2)；`NA` → None
-    pub l_pin: Option<f64>,
-    pub c_pin: Option<f64>,
+/// The value carried by one parsed field.
+pub enum ParsedValue {
+    Text(String),       // Plain text: identifiers, enumerations and quantities as written (`1.65V`).
+    Corner(Corner),     // Corner triple `(typ, min, max)`.
+    Table(ParsedTable), // Row-oriented table (`{ header, data }`).
+    Lines(Vec<String>), // Ordered free-text lines no declaration accounted for.
 }
 
-/// [Model] 节段（符号表条目，`IndexMap` 的 value）。
-pub struct IBIS_Model {
-    pub model_name: String,          // 该模型名 = 符号表 Key
-    pub model_type: String,          // 枚举文本（如 "I/O"）→ String
-    pub polarity: Option<String>,
-    pub enable: Option<String>,
-    pub c_comp: Option<IBIS_CornerValue>,        // `1.12p 0.79p 1.15p` → f64 三元组
-    pub temperature_range: Option<IBIS_CornerValue>,
-    pub voltage_range: Option<IBIS_CornerValue>, // $V_{min}\le V_{typ}\le V_{max}$ 校验对象
-    pub pullup_reference: Option<IBIS_CornerValue>,
-    pub pulldown_reference: Option<IBIS_CornerValue>,
-    pub ramp: Option<Ramp>,                 // dv/dt 为比值 f64
-    pub pulldown: Option<Vec<ViPoint>>,     // IV 曲线数值化
-    pub pullup: Option<Vec<ViPoint>>,
-    pub gnd_clamp: Option<Vec<ViPoint>>,
-    pub power_clamp: Option<Vec<ViPoint>>,
-    // ... 其余子节段同理（Submodel / Waveform / Test Load 等）
+/// One typed field of a parsed node.
+pub struct ParsedField {
+    pub key: String,        // Output key: the keyword's own snake key or a param name.
+    pub value: ParsedValue, // Typed value of the field.
 }
 
-/// [Component] 节段（含 Pin 映射）。
-pub struct IBIS_Component {
-    pub component: String,
-    pub manufacturer: String,
-    pub package: Option<ComponentPackage>,      // r_pkg / l_pkg / c_pkg → IBIS_CornerValue
-    pub pins: Vec<PinInfo>,                     // [Pin] 列表 → Vec<PinInfo>
-    // ...
-}
-
-/// 根领域模型：零字符串污染后的符号表容器。
-pub struct IBIS_File {
-    pub header: IBIS_FileHeader,
-    pub components: Vec<IBIS_Component>,                // 每个 [Component]
-    pub models: IndexMap<String, IBIS_Model>,           // Key = model_name（O(1) + 保序）
-    pub submodels: IndexMap<String, IBIS_Submodel>,
-    // ... 其余一级节段
+/// One parsed keyword node — the AST node with its content turned into fields.
+pub struct ParsedNode {
+    pub keyword: String,           // Canonical schema name; the raw keyword when unknown.
+    pub occurrence: Occurrence,    // Single (`[X]`) or multiple (`[[X]]`) inside its parent.
+    pub fields: Vec<ParsedField>,  // Keyword's own value (if any), then its named params.
+    pub children: Vec<ParsedNode>, // Child sections in source order.
 }
 ```
 
-**符号表约定**：
+**字段约定常量**（同文件顶部）：`UNMATCHED_LINES_KEY = "lines"`（未匹配内容行的键）、`IV_COLUMN_NAMES = ["Voltage", "I(typ)", "I(min)", "I(max)"]`、`VT_COLUMN_NAMES = ["Time", "V(typ)", "V(min)", "V(max)"]`。
 
-- `IBIS_File.models` 为 `IndexMap<String, IBIS_Model>`，Key 为 `model_name`，同时保证 $O(1)$ 查找与源文件顺序。
-- `IBIS_File.submodels` 同理（`IndexMap<String, IBIS_Submodel>`）。
-- `IBIS_Component.pins` 为 `Vec<PinInfo>`，保留出现顺序。
-- 重复节段（多个 `Model` / 多个 `Pin`）→ 注册表 `occurrence: Multiple` → `IndexMap` / `Vec` → 输出 `[[...]]`。
+**content 形态 → 字段判定**：
 
-**第一步产物——关键字标记**（定义于 [`keyword_valid.rs`](../crates/ibis2ibstoml/src/backend/keyword_valid.rs:1)）：
+| AST content 特征 | 产出字段 |
+|------|------|
+| keyword 行即值（`[Manufacturer] Acme`） | `Text`，键 = keyword 的 snake 名（`manufacturer`） |
+| 多行自由文本（`Notes` / `Source` / `Model Selector` 的列表行） | `Lines` |
+| `key 值` 或 `key = 值` 具名参数行（值可为单值 / corner 三元组） | 按 `__param__` 类型 → `Text` / `Corner` |
+| 表头 + 数值行（`Pin` / `Diff Pin` / `Pulldown` / 波形 / `Add Submodel`…） | `Table` |
+| 表形态但无列名（`Node_Declarations`） | `Table { header: [], data: [[...]] }` |
+| 未被任何声明消费的行 / param 多余 token | `Lines`，键 `lines` |
+| 空内容 | 无字段 |
+
+**AST → 解析树示例**（`[Model]` 片段，含字段、corner 与子节段）：
+
+```text
+源 IBIS                              AST content                  ParsedNode（类型化结果）
+[Model] IO8FT
+Model_type  I/O                      ["IO8FT",                    keyword    = "Model"
+C_comp  1.12p 0.79p 1.15p             "Model_type  I/O",          occurrence = Multiple
+                                      "C_comp  1.12p ..."]        fields     = [
+   （Ramp / Pulldown 为子节段）                                       model      = Text("IO8FT")            ← 键 = keyword snake 名
+                                                                     model_type = Text("I/O")
+                                                                     c_comp     = Corner("1.12p", "0.79p", "1.15p") ]
+                                                                  children   = [
+                                                                    Ramp     → fields = [
+                                                                                 "dv/dt_r" = Corner("1.926/597.107p", …),
+                                                                                 r_load    = Text("1k") ]
+                                                                    Pulldown → fields = [
+                                                                                 pulldown  = Table {
+                                                                                   header: ["Voltage","I(typ)","I(min)","I(max)"],
+                                                                                   data:   [["-3.3","-2mA","-2mA","-1mA"], …] } ] ]
+```
+
+**第一步产物**（定义于 [`pre_process.rs`](../crates/ibis2ibstoml/src/backend/pre_process.rs:33)）：
 
 ```rust
-/// 一个关键字在 AST 中被标记的出现类别。
-pub enum OccurrenceMark {
-    Singleton,   // 如 File_Header / Ramp：父作用域内至多一次
-    Multi,       // 如 Model / Pin：父作用域内可出现多次
-}
-
-/// 单例 / 多实例标记：记录关键字名、出现类别与作用域路径。
 pub struct KeywordMark {
-    pub keyword: String,          // 规范化后的关键字名
-    pub occurrence: OccurrenceMark,
-    pub scope_path: String,       // 如 "Component.MyChip.Pin"
+    pub keyword: String,                    // Canonical schema name; the raw keyword when unknown.
+    pub occurrence: Occurrence,             // Single (`[X]`) or multiple (`[[X]]`) inside its parent.
+    pub scope_path: String,                 // Dotted path from the root, e.g. "Component.Pin".
+    pub spec: Option<&'static SectionSpec>, // Schema spec of the keyword; `None` when unknown.
 }
 ```
 
-**KeywordSpec 作用域树注册表**（登记于独立文件 `backend/keyword.rs`，规范数据源）：
+**数值读取原语**（定义于 [`content_parse::parse_value`](../crates/ibis2ibstoml/src/backend/content_parse.rs:480)，**只读判断，不写回**）：
 
 ```rust
-pub enum Occurrence { Once, Multiple }      // Multiple → TOML [[...]]
-pub enum Requirement { Required, Optional } // 相对父作用域：父存在才强制子必填
-pub struct KeywordSpec {
-    pub name: &'static str,          // 规范名，如 "Model"、"IBIS ver"
-    pub occurrence: Occurrence,      // Once / Multiple
-    pub required: Requirement,       // Required / Optional
-    pub children: &'static [KeywordSpec],
-}
-pub static KEYWORD_REGISTRY: &[KeywordSpec] = &[ /* 根作用域树 */ ];
-```
-
-- 作用域：`File_Header`（虚拟）、`Component`、`Model Selector`、`Model`、`Submodel`、`External Circuit`、`Test Data`、`Test Load`、`Define Package Model`、`Interconnect Model Set`。
-- `occurrence` 与 emitter 的 `[[...]]` 对齐：`Multiple` → `Vec` / `IndexMap` 强类型字段 → `[[...]]`；`Once` → `Option<T>` 单表 `[...]`。
-- 父可选子必选（如 `[Package]` 可选而 `R_pkg/L_pkg/C_pkg` 必选）：父置 `Optional`、子置 `Required`，语义为「父作用域存在则子必填，父不存在则子不出现」。
-- keyword 匹配大小写不敏感，`_` 与空格等价（3.2 §7）；与官方手册 keyword 树交叉核对，并用测试断言与 `ChildDef` 关键字列表一致。
-
-**各节段强类型 → 符号表落点**：
-
-| 类型 | 对应 SectionNode 树位置 | 说明 |
-|------|------------------------|------|
-| [`IBIS_FileHeader`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1) | `File_Header` 虚拟节点（children） | 每个 header 字段子节点映射一个字段 |
-| [`IBIS_Component`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1) | `Component` | 含 `Manufacturer` / `Package` / `Pin` / `Pin Mapping` 等 children |
-| [`IBIS_Model`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1) | `Model` | 含 `Model Spec` / `Ramp` / `Pulldown` / `Rising Waveform` 等 children |
-| [`IBIS_Submodel`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1) | `Submodel` | |
-| `IBIS_ExternalCircuit` | `External Circuit` | |
-| `IBIS_TestData` | `Test Data` | |
-| `IBIS_TestLoad` | `Test Load` | |
-| `IBIS_DefinePackageModel` | `Define Package Model` | |
-| `IBIS_InterconnectModelSet` | `Interconnect Model Set` | |
-| `IBIS_ModelSelector` | `Model Selector` | |
-
-**IBIS_File 容器类型**：
-
-| 字段 | 类型 | 来源 |
-|------|------|------|
-| `models` | `IndexMap<String, IBIS_Model>` | 每个 `[Model]`，以 `model_name` 字段为 key |
-| `submodels` | `IndexMap<String, IBIS_Submodel>` | 每个 `[Submodel]` |
-| `components` | `Vec<IBIS_Component>` | 每个 `[Component]` |
-| `test_loads` | `IndexMap<String, IBIS_TestLoad>` | 每个 `[Test Load]` |
-| `package_models` | `IndexMap<String, IBIS_DefinePackageModel>` | 每个 `[Define Package Model]` |
-
-**数值化解析原语**（定义于 [`unit.rs`](../crates/ibis2ibstoml/src/backend/unit.rs:1)）：
-
-```rust
-/// 解析单个带单位文本：空 / "NA" → None；否则按 NumberSpec 换算为 f64 → Some。
-pub fn parse_opt_f64(text: &str) -> Result<Option<f64>, String>;
-/// 解析角点三元组文本（如 "3.3V 2.0V 3.6V"）→ Triplet<f64>。
-pub fn parse_triplet(values: &[String]) -> Result<IBIS_CornerValue, String>;
-/// 解析 IV 曲线内容行（每行 4 列）→ Vec<ViPoint>。
-pub fn parse_vi_points(lines: &[String]) -> Result<Vec<ViPoint>, String>;
+pub(crate) fn split_number_unit(token: &str) -> Option<(f64, Option<String>)>; // 数值 + 单位原文，不缩放
+pub(super)  fn is_quantity_token(token: &str) -> bool;  // 数量或 IBIS 比值（1.9/597p）
+pub(super)  fn is_missing_token(token: &str) -> bool;   // 空 / NA
 ```
 
 ## 3.4 输入输出
 
-**公共入口**：
+**公共入口**（输出类型化解析树）：
 
 ```rust
-// 严格模式：首个错误即返回（签名向后兼容）
-pub fn semantic_parse(tree: &[SectionNode]) -> Result<IBIS_File, SemanticError>;
-// 宽松模式：问题写入 ValidationReport，不阻断转换
+// 严格模式：取报告中首个 Error 即返回
+pub fn semantic_parse(tree: &[SectionNode]) -> Result<Vec<ParsedNode>, Diagnostic>;
+// 宽松模式：收集全部诊断，不阻断转换（当前实现恒为 Ok）
 pub fn semantic_parse_lenient(tree: &[SectionNode])
-    -> Result<(IBIS_File, ValidationReport), SemanticError>;
-// 便捷包装：错误转为人类可读字符串（兼容旧 API 风格）
-pub fn semantic_parse_string(tree: &[SectionNode]) -> Result<IBIS_File, String>;
+    -> Result<(Vec<ParsedNode>, ValidationReport), Diagnostic>;
 ```
 
 | 项 | 内容 |
 |----|------|
-| 输入 | `tree: &[SectionNode]` — frontend 产出的 AST 树 |
-| 输出 | `Ok(IBIS_File)` — 数值化强类型领域模型（宽松模式附带 `ValidationReport`） |
-| 错误 | `Err(SemanticError)` — 结构化语义错误 |
+| 输入 | `tree: &[SectionNode]` — frontend 产出的 AST 树（**保持不变**） |
+| 输出 | `Ok(Vec<ParsedNode>)` — 类型化解析树（根级节点，含 `File_Header`；宽松模式附带 `ValidationReport`） |
+| 错误 | `Err(Diagnostic)` — 严格模式下报告里的首个 `Severity::Error` |
 
-**错误模型**（结构化错误 enum）：
+**下游消费**：[`lib.rs`](../crates/ibis2ibstoml/src/lib.rs:124) 的 `parse_to_toml` 将解析树交给 [`emitter::serialize_parsed_tree`](../crates/ibis2ibstoml/src/emitter/toml.rs:63) 产出 TOML：
 
 ```rust
-/// Structured semantic error emitted by the backend.
-#[derive(Debug, Clone, PartialEq)]
-pub enum SemanticError {
-    // -------- 第一步：关键字与多实例标记 --------
-    UnknownKeyword { scope: String, keyword: String },
-    KeywordOutOfScope { keyword: String, expected_scope: String },
-    // -------- 第二步：结构解构与符号表构建 --------
-    MissingRequiredKeyword { scope: String, keyword: String },
-    KeywordAppearsMoreThanOnce { scope: String, keyword: String },
-    MissingRequiredField { section: String, field: String },
-    InvalidNumber { section: String, field: String, value: String },  // 数值解析失败
-    TableMalformed { section: String },                               // IV 曲线列数不一致
-    // -------- 第三步：物理与逻辑数据校验 --------
-    NonMonotonicCurve { section: String, column: usize },
-    ValueOrderViolation { section: String, field: String, values: Vec<f64> },
-    ReferenceNotFound { from: String, target: String },
-    InvalidSyntax { rule: &'static str, detail: String },
-    ReservedWordMisuse { word: String, detail: String },
+pub fn parse_to_toml(content: &str) -> Result<String, String> {
+    let tree = frontend::parse(content)?;                       // frontend AST（不变）
+    let parsed = backend::semantic_parse(&tree)?;               // 类型化解析树
+    Ok(emitter::serialize_parsed_tree(&parsed))                 // 解析树 → TOML
+}
+```
+
+**诊断模型**（结构化，定义于 [`validation::diagnostics`](../crates/ibis2ibstoml/src/backend/validation.rs:66)）：
+
+```rust
+/// How serious one finding is.
+pub enum Severity { Error, Warning }
+
+/// The inspection item that produced a finding — one variant per rule.
+pub enum Rule {
+    UnknownKeyword,         // Keyword the schema does not know; reported by `pre_process`.
+    MissingRequiredKeyword, // Child a present keyword must carry, but does not.
+    InvalidFormat,          // Corner or table value that is not a quantity, or a missing header.
+}
+impl Rule {
+    pub fn severity(self) -> Severity;       // 规则自带严重级
+    pub fn name(self) -> &'static str;       // 稳定 snake_case 标签
 }
 
-/// 宽松模式收集的校验问题（错误 + 警告）。
-#[derive(Debug, Clone, PartialEq, Default)]
+/// One finding: the rule that fired, its severity, the scope and the detail.
+pub struct Diagnostic {
+    pub rule: Rule,
+    pub severity: Severity,
+    pub scope: String,   // Dotted scope path of the node, or "(file)" at the root.
+    pub message: String, // Human-readable detail, quoting the offending text.
+}
+
+/// Findings collected while running the phases, split by severity.
 pub struct ValidationReport {
-    pub errors: Vec<Issue>,
-    pub warnings: Vec<Issue>,
+    pub errors: Vec<Diagnostic>,   // Findings that stop strict mode.
+    pub warnings: Vec<Diagnostic>, // Findings a lenient run reports and keeps going on.
 }
-pub struct Issue { pub scope: String, pub message: String }
 ```
 
-**编排实现**（`mod.rs` 内三步走接线）：
+> `Diagnostic` 携带作用域路径但**不携带行号**：解析树不含源行号，诊断只点名节点（scope path）并引用违规文本。
+
+**编排实现**（`mod.rs` 内三步走接线，校验直接作用于解析树）：
 
 ```rust
-fn run_phases(tree: &[SectionNode], collector: &mut ValidationCollector)
-    -> Result<IBIS_File, SemanticError> {
-    // 第一步：关键字与多实例标记 + 结构层级校验。
-    let marks = keyword_valid::keyword_valid(tree, collector);
-    // 第二步：结构解构与符号表构建（Rebuild + 数值化，宽松模式失败值以 None 占位）。
-    let file = symbol_table_build::symbol_table_build(tree, &marks, collector);
-    // 第三步：物理与逻辑数据校验（单调性 / 范围 / 符号引用）。
-    data_valid::data_valid(&file, collector);
-    Ok(file)
+fn run_backend(tree: &[SectionNode]) -> (Vec<ParsedNode>, ValidationReport) {
+    let mut collector = ValidationCollector::new();
+    // 第一步：关键字标记（occurrence / scope_path / spec）。
+    let marks = pre_process::mark_keywords(tree, &mut collector);
+    // 第二步：content 类型化，产出解析树。
+    let parsed = content_parse::content_parse(tree, &marks);
+    // 第三步：在解析树上做内容与形状校验。
+    validation::validate(&parsed, &mut collector);
+    (parsed, collector.into_report())
 }
 ```
 
-**数值契约（零字符串污染要点）**：
+**文本契约（保真，不归一化）**：
 
-- 存储层不再出现任何带单位的文本字符串：`1.12p` → `1.12e-12`、`10mA` → `1e-2`、`3.3V` → `3.3`、`1.9/597p`（比值）→ `1.9 / 5.97e-10`。
-- `NA`（3.2 §2 保留字，数据不可用）→ `None`（`Option<f64>`），不影响校验（跳过对应项）。
-- 标识符类字段（`model_name` / `signal_name` / 文件名 / `Model_type` 等）与自由文本（`Notes` / `Disclaimer` / `Copyright`）**保持字符串**。
+- 带单位文本一律保留原文：`1.65V` → `Text("1.65V")`、`1.12p` → `Corner("1.12p", …)`；比值 `1.9/597p` 同样保留原文。
+- `NA` / 空 token → 缺失：具名参数整条丢弃（`Vinh+ NA` 不产生字段）；corner 缺失元素记为空串；表 cell **保留原文**以不丢行信息。
+- 标识符 / 枚举 / 自由文本（`model`、`model_type`、`Notes`、`Copyright` 等）保持 `Text` / `Lines`。
+- 声明类型限定 token 消耗数（`text` 取全部、`quantity` 取 1、`corner` 取 3），余下 token 回落到 `lines` 字段。
 
 ---
 
@@ -641,173 +579,112 @@ fn run_phases(tree: &[SectionNode], collector: &mut ValidationCollector)
 
 ## 4.1 模块设计思路
 
-`emitter` 是流水线的第三段：将数值化强类型 [`IBIS_File`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1) 序列化为 TOML 字符串（含 `[[array-of-tables]]`）。
+`emitter` 是流水线的末段：**直接消费 backend 产出的类型化解析树（`Vec<ParsedNode>`）**，序列化为 TOML 字符串（含 `[[array-of-tables]]`）。它不触碰 frontend AST，也不做任何语义工作——每个值按解析结果**原样写出**（数量保留单位）。
 
-**文件职责**：序列化实现在 [`toml.rs`](../crates/ibis2ibstoml/src/emitter/toml.rs:1)，由 [`mod.rs`](../crates/ibis2ibstoml/src/emitter/mod.rs:14) 声明并 re-export 入口——实现与导出分离，调用方只依赖 `mod.rs` 的导出接口。
+**文件职责**：序列化实现在 [`toml.rs`](../crates/ibis2ibstoml/src/emitter/toml.rs:63)，由 [`mod.rs`](../crates/ibis2ibstoml/src/emitter/mod.rs:18) 声明并 re-export 入口——实现与导出分离，调用方只依赖 `mod.rs` 的导出接口。
 
-**序列化思路**：从 `IBIS_File` 根开始**递归**——字符串字段直接输出 `key = "value"`；数值字段输出 `key = <f64>`（无引号）；子结构输出 `[Section]` 表头后递归其字段；`Vec` / `IndexMap` 字段输出 `[[...]]` array-of-tables 并为每项展开表头；`Triplet<f64>` 按 typ/min/max 展开为数值；`Vec<ViPoint>` 输出为 `[[...]]` 数组表。整体是「形态 → 语法」的直接映射，不引入中间表示。
+**序列化思路**：从根节点开始**递归**（[`TomlWriter`](../crates/ibis2ibstoml/src/emitter/toml.rs:75) 走树并累加文本，[`text`](../crates/ibis2ibstoml/src/emitter/toml.rs:167) 子模块负责纯格式化），三类规则驱动：
+
+1. **occurrence → 表头**：同一父路径下逐个节点输出；`ParsedNode.occurrence == Multiple` **或**同名兄弟多于一个 → `[[Path.Keyword]]`，否则 `[Path.Keyword]`（后者保证被摊平的树仍是合法 TOML）。
+2. **body → 值形态**：`fields` 在当前表内逐字段输出 `key = 值`；`Text` → 字符串（数量含单位）；`Corner` → 单行内联表 `{ header = ["typ", "min", "max"], data = [...] }`；`Table` → `{ header = [...], data = [[...]] }`（`data` 每行独占一行）；`Lines` → 空串 / 普通字符串 / 多行基本字符串。
+3. **特殊布局**：虚拟容器 `[File_Header]` **扁平化**——其子节点的字段直接写进 `[File_Header]` 表（`ibis_ver = "2.1"`），不再嵌套子表；非 bare key（`dv/dt_r`、`vinh+`、含空格者）按 schema 拼写加引号。
 
 ```mermaid
 flowchart LR
-    IBIS[/IBIS_File 数值化强类型/] --> STR[字符串字段 key = value]
-    IBIS --> NUM[数值字段 key = f64]
-    IBIS --> STRUCT[子结构 Section 表头]
-    IBIS --> COLL[Vec IndexMap 字段 array-of-tables]
-    IBIS --> TRIP[Triplet typ min max 数值展开]
-    IBIS --> VIP[Vec ViPoint 数组表]
-    STR --> OUT[/TOML 字符串/]
-    NUM --> OUT
-    STRUCT --> OUT
-    COLL --> OUT
-    TRIP --> OUT
-    VIP --> OUT
+    PARSED[Vec ParsedNode 类型化解析树] --> GROUP[按父路径遍历 同名兄弟计数]
+    GROUP --> HDR[表头 单表 或 array-of-tables]
+    HDR --> FIELDS[fields 逐字段输出]
+    HDR --> HEADER[File_Header 扁平化字段]
+    FIELDS --> VAL[Text 字符串 Corner 内联表 Table 表 Lines 字符串]
+    VAL --> OUT[TOML 字符串]
+    HEADER --> OUT
 ```
 
 **要点**：
 
-- `[[array-of-tables]]` 由强类型的 `Vec` / `IndexMap` 字段隐式决定，backend 无需单独标注
-- `Option<None>` 不输出该 key（TOML 无 null）
-- **数值字段直接输出 f64**（不再输出字符串），`Triplet<f64>` / `ViPoint` 均输出数值
-- `toml_section_name` 仅在输出层执行空格 → 下划线替换
-- 序列化结果与 [`ibis_struct.toml`](ibis_struct.toml:1) schema 对齐（数值形态见 6.1）
+- `[[...]]` / `[...]` 由 `ParsedNode.occurrence` 与**同名兄弟计数**共同决定，信息在解析树上显式携带（emitter 不查 schema）。
+- `Text` 一律按原文输出（保留单位，如 `"1.65V"`）；缺失的字段不输出该 key。
+- 表与曲线统一以 `{ header = [...], data = [[...]] }` 表达，角点复用同一形状（单行）。
+- 键与路径段统一经 [`key_segment`](../crates/ibis2ibstoml/src/emitter/toml.rs:257) 判定（bare key 才免引号），字符串统一转义。
+- 输出与参考文件（[`tests/examples/f103c8.ibs.toml`](../tests/examples/f103c8.ibs.toml:1)）逐字一致。
 
 ## 4.2 模块结构
 
-[`emitter/mod.rs`](../crates/ibis2ibstoml/src/emitter/mod.rs:14) 声明 `pub mod toml;`，重导出强类型序列化入口。
+[`emitter/mod.rs`](../crates/ibis2ibstoml/src/emitter/mod.rs:18) 声明 `pub mod toml;`，重导出序列化入口。
 
 [`emitter/toml.rs`](../crates/ibis2ibstoml/src/emitter/toml.rs:1) 序列化函数：
 
-| 函数 | 作用 |
+| 函数 / 类型 | 作用 |
 |------|------|
-| [`escape_toml_string`](../crates/ibis2ibstoml/src/emitter/toml.rs:22) | 转义 `\` 与 `"`，包裹双引号 |
-| [`toml_section_name`](../crates/ibis2ibstoml/src/emitter/toml.rs:38) | 关键词名 → section 名（空格 → 下划线） |
-| [`serialize_ibis_file`](../crates/ibis2ibstoml/src/emitter/toml.rs) | 入口：强类型 `IBIS_File` → TOML 字符串（含 `[[...]]`） |
-| `emit_f64` | 数值字段输出 `key = <f64>`（新增） |
-| `emit_vi_points` | `Vec<ViPoint>` → `[[...]]` 数组表（新增） |
+| [`serialize_parsed_tree`](../crates/ibis2ibstoml/src/emitter/toml.rs:63) | 入口：`&[ParsedNode]` → TOML 字符串（含 `[[...]]`） |
+| [`TomlWriter`](../crates/ibis2ibstoml/src/emitter/toml.rs:75) | 走树并累加文档：`write_siblings`、`write_node`、`write_table_header`、`write_field`、`is_array_of_tables` |
+| [`text`](../crates/ibis2ibstoml/src/emitter/toml.rs:167) | 纯格式化：`render_value`、`render_corner`、`render_table`、`render_lines`、`render_string_array`、`key_segment`、`quote`、`escape_basic` |
 
 ## 4.3 数据结构
 
-**输入**：数值化强类型 [`IBIS_File`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1)（及其子结构、`Triplet<f64>`、`Vec<ViPoint>`）。
+**输入**：backend 产出的类型化解析树（[`ParsedNode`](../crates/ibis2ibstoml/src/backend/content_parse.rs:142) 树，见 §3.3）。
 
 **输出**：TOML 字符串。
 
-**强类型形态 → TOML 输出**：
+**解析树形态 → TOML 输出**：
 
-| 强类型形态 | TOML 输出 |
-|------------|-----------|
-| 字符串字段（`String` / `Option<String>`） | `key = "value"` |
-| 数值字段（`f64` / `Option<f64>`） | `key = 0.1`（无引号） |
-| 子结构（`IBIS_Component` 等） | `[Component]` |
-| `Vec<T>` / `IndexMap<K, T>`（`pins`、`models`、`rising_waveforms`） | `[[...]]` array-of-tables |
-| [`Triplet<f64>`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1) | corner 三元组数值展开（typ/min/max） |
-| [`Vec<ViPoint>`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1) | `[[...]]` 数组表：`voltage` / `i_typ` / `i_min` / `i_max` |
+| 解析树形态 | TOML 输出 |
+|---------|-----------|
+| `occurrence Multiple` 或同名兄弟 > 1 | `[[Path.Keyword]]` array-of-tables |
+| 否则 | `[Path.Keyword]` 单表 |
+| `keyword == "File_Header"` | `[File_Header]` + 子节点字段**扁平**写入 |
+| `ParsedValue::Text` | `key = "原文"`（数量含单位，如 `"1.65V"`） |
+| `ParsedValue::Corner` | `key = { header = ["typ", "min", "max"], data = [...] }` |
+| `ParsedValue::Table` | `key = { header = [...], data = [[...]] }`（`data` 逐行换行） |
+| `ParsedValue::Lines` | 空 → `""`；单行 → `"…"`；多行 → `"""\n…\n"""`（闭合 `"""` 独占一行） |
+| 非 bare 键（`dv/dt_r` / `vinh+`） | `"dv/dt_r" = …` |
 
 ## 4.4 输入输出
 
 | 入口 | 输入 | 输出 |
 |------|------|------|
-| [`serialize_ibis_file`](../crates/ibis2ibstoml/src/emitter/toml.rs) | `&IBIS_File` | `String`（TOML，含 `[[...]]`） |
+| [`serialize_parsed_tree`](../crates/ibis2ibstoml/src/emitter/toml.rs:63) | `&[ParsedNode]` | `String`（TOML，含 `[[...]]`） |
 
 ```rust
-pub fn serialize_ibis_file(file: &IBIS_File) -> String;
+pub fn serialize_parsed_tree(nodes: &[ParsedNode]) -> String;
 ```
 
-> 旧版 `serialize_tree`（直接序列化 `SectionNode` 树，调试 / 测试用）保留与否见 6.2。
+**下游接线**：`lib.rs` 的 [`parse_to_toml`](../crates/ibis2ibstoml/src/lib.rs:124) 按 frontend → `semantic_parse`（解析树）→ `serialize_parsed_tree` 完成一次转换（见 §3.4）。
 
 ---
 
 # 5. 测试策略
 
-测试分单元、crate 集成、根包集成三层，覆盖各阶段能力：
+测试分「源文件内单元测试」与「根包集成测试」两层；crate 内**没有** `tests/` 目录：
 
 | 测试类型 | 位置 | 覆盖 |
 |----------|------|------|
-| 单元测试 | 各源文件末尾 `#[cfg(test)]` 模块 | 词法原语、行分类、块分组、建树、数值化解析、标记、重建、校验、序列化 |
-| backend 数值化单测 | `backend/unit.rs` | `parse_opt_f64`（前缀 / 单位 / `NA`）、`parse_triplet`、`parse_vi_points` |
-| backend 标记单测 | `backend/keyword_valid.rs` | 单例 / 多实例标记（`[File_Header]` 单例、`[Model]` / `[Pin]` 多实例）、父子嵌套合法性 |
-| backend 重建单测 | `backend/symbol_table_build.rs` | Component → `Vec<PinInfo>`、Model → `IndexMap<String, IBIS_Model>`、IV 曲线 → `Vec<ViPoint>`、数值化断言（`1.12p` → `1.12e-12`） |
-| backend 校验单测 | `backend/data_valid.rs` | 电压严格单调递增、$V_{min}\le V_{typ}\le V_{max}$、符号引用存在性 |
-| backend keyword 单测 | `backend/keyword.rs` | 注册表作用域树结构、occurrence/required 声明、与规范一致性 |
-| backend spec 单测 | `backend/spec.rs` | 数值单位解析（科学计数法 / 前缀 / 单位可选）、规则声明完整性 |
-| 严格/宽松模式 | `backend/mod.rs` | `semantic_parse`（首个错误返回）与 `semantic_parse_lenient`（收集 `ValidationReport`） |
-| emitter 单测 | `emitter/toml.rs` | 强类型 → TOML：数值字段 `key = 0.1`、`[[...]]`、`Triplet<f64>`、`Vec<ViPoint>`；注册表 occurrence ↔ 强类型集合 ↔ `[[...]]` 一致性 |
-| crate 集成测试 | [`tests/examples_compat_test.rs`](../crates/ibis2ibstoml/tests/examples_compat_test.rs:19) | 真实样本 → 强类型 → 对照参考 `.ibs.toml`（存在时逐字匹配）；宽松模式下全量转换并收集问题 |
-| 根包集成测试 | [`tests/header_parse_test.rs`](../tests/header_parse_test.rs:100) | 经 `frontend::parse` 从真实样本解析文件头，映射到 `IBIS_FileHeader` |
+| 单元测试 | 各源文件末尾 `#[cfg(test)]` 模块 | 词法原语、行分类、块分组、建树、内容类型化、标记、校验、序列化 |
+| schema 单测 | [`schema/mod.rs`](../crates/ibis2ibstoml/src/schema/mod.rs:624) | `normalize_keyword` / `to_snake_key` / `find_level`（深度 1 / 2 / 3 与未登记关键字）；`File_Header` 九个条目且非顶层 section；root / child occurrence（`[X]` vs `[[X]]`）；`[Pin]` 列序与类型（含 `col0`）；符号键拼写（`dv/dt_r`、`vinh+`）；`Package` 全 corner 参数 |
+| frontend 单测 | [`lexical_analysis.rs`](../crates/ibis2ibstoml/src/frontend/lexical_analysis.rs:88) / [`syntax_analysis.rs`](../crates/ibis2ibstoml/src/frontend/syntax_analysis.rs:1) / [`ast_builder.rs`](../crates/ibis2ibstoml/src/frontend/ast_builder.rs:177) | 关键词名与内容行提取、`[Keyword]` 头识别（拒绝行内 `[Submodel]`）、逐行分组与 schema 定级（含三级节段、以及 schema 未登记的 `[R Series]`）、`[File_Header]` 分组、父子建树、`[End]` 跳过 |
+| backend 标记单测 | [`pre_process.rs`](../crates/ibis2ibstoml/src/backend/pre_process.rs:169) | scope path（`Component.Manufacturer`）、occurrence（`Component` 多实例、`Pin` 单例）、三级节段后代回退、未知 keyword 诊断 |
+| backend 类型化单测 | [`content_parse.rs`](../crates/ibis2ibstoml/src/backend/content_parse.rs:823) | keyword 自身值键名、corner 参数、表列名五种来源、短行保留、`Model` 两种拼写与符号键、`NA` 缺失、多余 token 回落 `lines`、IV / VT 固定列名、`split_number_unit` 与 `is_quantity_token` |
+| backend 校验单测 | [`validation.rs`](../crates/ibis2ibstoml/src/backend/validation.rs:438) | 依赖必填（父在则子必在、父不在不报）、完整 `[Component]` 无发现、角点非数量告警、曲线 cell 非数值告警、缺列名行告警、`Rule` 名称与严重级稳定 |
+| backend 模式单测 | [`backend/mod.rs`](../crates/ibis2ibstoml/src/backend/mod.rs:138) | 严格模式返回首个问题、宽松模式仍产出解析树、报告汇总各阶段发现 |
+| emitter 单测 | [`emitter/toml.rs`](../crates/ibis2ibstoml/src/emitter/toml.rs:285) | `File_Header` 扁平字段、`[[...]]`、corner 内联表、表 `data` 逐行换行、同名兄弟自动成数组、符号键引号、空表头、多行字符串（闭合符独占一行）、单行回落普通字符串；输出统一用 `toml::from_str` 反向校验合法性 |
+| crate 入口单测 | [`lib.rs`](../crates/ibis2ibstoml/src/lib.rs:166) | `parse_to_parsed` / `parse_to_toml` 端到端断言（含 `[File_Header]`、`[[Model]]` 计数与 `toml::from_str` 校验） |
+| 根包集成测试 | [`tests/header_parse_test.rs`](../tests/header_parse_test.rs:75) | 经 `frontend::parse` 取原始文件头字段 + `parse_to_parsed` 取解析树，逐项核对真实样本 `f103c8.ibs` |
 
-参考样本：`tests/examples/` 下 `cyclone2.ibs`、`f103c8.ibs`、`invchain_test_0614.ibs`、`u26a_800.ibs`、`virtex5.ibs`，其中前两者带 `.ibs.toml` 参考输出。
+参考样本：`tests/examples/` 下 `cyclone2.ibs`、`f103c8.ibs`、`invchain_test_0614.ibs`、`u26a_800.ibs`、`virtex5.ibs`；其中 [`f103c8.ibs.toml`](../tests/examples/f103c8.ibs.toml:1) 是由根包 [`src/main.rs`](../src/main.rs:10) 生成的 TOML 参考输出，可作为逐字回归比对的基准。
 
-> 参考输出随 emitter 的数值化 `[[...]]` 设计对齐而演进，backend 数值化重构后需**重新生成** `.ibs.toml` 参考文件。
+> 解析树以原文承载数值，输出随 schema 与解析规则演进；改动 `content_parse` 的列名或形状规则后需**重新生成** `f103c8.ibs.toml` 参考文件。
 
 ---
 
-# 6. 附录
-
-## 6.1 语义约定
-
-1. **关键词大小写**：pest `kw_*` 规则为**精确匹配**（大小写敏感，如 `"IBIS ver"`）；未识别关键词落入通用 [`keyword`](../crates/ibis2ibstoml/src/frontend/ibis.pest:55) 规则原样保留。**文件头字段分类**在 AST 阶段**大小写不敏感**（`to_ascii_lowercase()` 比对）。空格/特殊符号差异导致的匹配不上属输入文件问题，程序不纠错。
-2. **下划线仅属 TOML 输出层**：分析层不解析/还原下划线；仅 emitter 输出时 `replace(' ', "_")`。作用域解析把 keyword 的 `_` 与空格视为等价（3.2 §7）。
-3. **`[Comment Char]` 中途改注释符：out-of-scope**，`|` 硬编码。`line_type::parse_continuation_content` 作为保留能力，供多行字段 / `[Comment Char]` 处理使用（标注 `#[allow(dead_code)]`）。
-4. **pest 分组 vs 具体规则**：Rust 端只需处理 `first_level_keyword` / `second_level_keyword` / `kw_end` / `keyword` 四种规则类型；具体 `kw_*` 规则全部在 pest 端维护。
-5. **零字符串污染（backend 核心）**：进入 backend 后所有带工程单位的文本**必须**解析为 `f64`（`1.12p` → `1.12e-12`、`10mA` → `1e-2`）；IV 曲线解析为 [`Vec<ViPoint>`](../crates/ibis2ibstoml/src/backend/ibis_structure.rs:1)。`NA` → `None`。标识符类字段（`model_name` / `signal_name` / 文件名 / `Model_type` 等）与自由文本（`Notes` 等）保持字符串。
-6. **`[[array-of-tables]]` 归属**：由注册表 `occurrence: Multiple` 对应的强类型集合（`Vec` / `IndexMap`）决定，emitter 按字段形态输出 `[[...]]`；用测试保证注册表、强类型、输出三者一致。
-7. **强类型落点**：数值化强类型领域模型定义在 `backend/ibis_structure.rs`；根包 `ibis_parser::ibis_structure` re-export 该强类型，保持路径兼容。
-8. **规范中心**：`spec.rs` 集中声明数值单位 / 3.2 语法规则 / 内容规则；`unit.rs` 封装构建期数值化原语；各阶段只读引用、不重复实现；KeywordSpec 作用域树登记于独立文件 `backend/keyword.rs`。
-
-## 6.2 明确不做（out-of-scope）
-
-- `[Comment Char]` 中途更换注释符号（`|` 硬编码）
-- 分析层对下划线的解析/还原（仅作用域匹配时视为等价）
-- 由空格/特殊符号差异导致的 keyword 不匹配纠错
-- backend 不做文本解析（复用 frontend 的 `SectionNode` 树）
-- **数值反向还原**：backend 数值化后不再保留原始单位字符串（`1.12p` → `1.12e-12`）；如需原始文本，读取 frontend AST 即可，backend 不承载
-- 不引入 serde / 反序列化依赖（emitter 保持手写序列化；`toml` crate 仍留在根包）
-- 为未出现的新需求预先定义抽象（trait / 接口层，需要时再加）
-- `serialize_tree`（直接序列化 `SectionNode` 树）不再作为流水线出口保留；如需调试可临时以 `ast_debug.txt` 形式输出
-
-## 6.3 关键决策记录（ADR）
-
-| 决策 | 选择 | 理由 |
-|------|------|------|
-| Workspace 布局 | 根包 + `crates/ibis2ibstoml` 子 crate | 符合 Cargo Workspace 惯例，根 `src/` 与 `src/ibis_parser` 保持原位 |
-| crate 命名 | `ibis2ibstoml` | 与既有模块名一致，避免破坏引用 |
-| 内部结构 | frontend / backend / emitter 三段式 | 按 Pipeline 阶段划分，不嵌套多余文件夹 |
-| frontend 阶段命名 | `lexical_analysis` / `syntax_analysis` / `ast_builder` | 语义化命名 |
-| 容错 recovery 归属 | 折叠进 `syntax_analysis::block_grouping::recover_blocks` | 与 `group_pairs_to_blocks` 输出同为扁平 `ParsedBlock`，不设独立模块 |
-| 文件头字段分类 | Rust 端 `header_field::is_header_field_keyword`（大小写不敏感） | 避免 pest 分组冗余，集中管理；`second_level_keyword` 无法区分内层关键词 |
-| 空白/换行处理 | `NEWLINE \| WHITESPACE` 作为 `ibis_file` 显式消耗项 | 避免 pest `~` WS 跳跃歧义，确保正确匹配真实 IBIS 内容 |
-| `NodeKind` 设计 | 仅 `FileHeader` / `Regular` 两个变体 | 简化 AST 类型系统；`[[array-of-tables]]` 由强类型化隐式决定 |
-| **backend 定位（重构）** | 语义层：树 → 数值化强类型 `IBIS_File`（三步走）→ emitter 输出 | 与「emitter 把强类型输出为 TOML」一致 |
-| **backend 核心原则（重构）** | Rebuild 而非 In-place + 零字符串污染（f64） | AST 一次性解构重建；电气量一律数值化，杜绝字符串污染 |
-| **backend 三步走（重构）** | `keyword_valid` → `symbol_table_build` → `data_valid` | 标记 / 重建 / 校验职责分离，契合「单例多实例 → 符号表 → 物理逻辑校验」语义 |
-| **强类型命名（重构）** | 沿用旧版命名（`IBIS_File` / `IBIS_Component` / `IBIS_Model` / `PinInfo` / `Triplet<f64>`），仅新增 `ViPoint` | 命名不做大改，避免破坏引用；重构重点在三步走与数值化 |
-| **数值化（重构）** | 所有带单位文本 → `f64`；`NA` → `None`；IV 曲线 → `Vec<ViPoint>` | 进入符号表与校验阶段后无字符串数值；单调性 / 范围校验可直接数值比较 |
-| **数值解析提升** | `spec::NumberSpec::parse_si_number` 由「仅校验用」提升为「构建期解析器」 | 零字符串污染要求存储前即解析；`unit.rs` 封装 NA / 三元组 / 曲线原语 |
-| **符号表保序** | 强类型集合字段用 `IndexMap`（`IndexMap<String, IBIS_Model>`） | 保证 TOML 输出顺序与源文件一致 + O(1) 查找 |
-| backend 模块风格 | 普通函数 + 规范中心（keyword_valid / symbol_table_build / data_valid / spec / unit） | 映射与校验均以注册表 / `spec.rs` 为数据源，不引入 trait 抽象 |
-| keyword 作用域注册表 | `KeywordSpec` 树登记于独立文件 `backend/keyword.rs` | 解耦：keyword 名称 / 必填 / 单次多次集中声明，阶段只读 |
-| 规范中心 | `spec.rs` 声明数值单位 / 3.2 语法规则 / 内容规则 | 规范单点维护，代码只读不重复实现 |
-| 错误模型 | 结构化 `SemanticError` enum（三步走分组：标记 / 重建 / 校验） | 语义层错误种类多，结构化优于裸字符串 |
-| 严格 / 宽松双模式 | `semantic_parse`（严格）+ `semantic_parse_lenient`（收集 `ValidationReport`） | 真实世界样本可在宽松模式下全量转换并记录问题；宽松重建失败以 `None` 占位 |
-| **emitter 数值输出（重构）** | 数值字段输出 `key = <f64>`；`Vec<ViPoint>` 输出 `[[...]]` 数组表 | 与数值化强类型对齐，`Option<None>` 不输出 key |
-| 输出格式 | 强类型 → TOML 含 `[[...]]` | 对齐 [`ibis_struct.toml`](ibis_struct.toml:1) schema（数值形态） |
-| 参考输出演进 | backend 数值化重构后重新生成 `.ibs.toml` 参考文件 | emitter 输出数值后参考文件逐字匹配需对齐新形态 |
-| **根包统一（重构）** | 根包 `ibis_parser::ibis_structure` re-export 子 crate 数值化强类型 | 消除根包独立 `HashMap` 定义与子 crate 双定义；保持 `ibis_parser::ibis_structure` 路径兼容 |
-| pest / pest_derive 归属 | 移到新 crate | 语法生成只在 `ibis2ibstoml` 内发生 |
-| 根包角色 | re-export 兼容层 | 保持 `ibis_parser::ibis_structure` 引用路径不破坏 |
-| **schema 模块（重构）** | 新增 `src/schema/`：`ibis_schema.toml`（唯一结构数据源）+ `mod.rs`（加载）+ `model.rs`（强类型 + validator） | 集中 IBIS 规范（"抄手册"），改规范只改一个文件 |
-| **结构数据源（重构）** | `ibis_schema.toml` 采用 `[Section]`/`[[Section]]` + `key = "Type"` 抄手册格式；每个 keyword 下必有同名 section，首字段 = keyword 名，空类型写 `"()"` | 声明式、可生成 pest / 当 example；`[[...]]` 天然表达 occurrence |
-| **语义校验（重构）** | `validator` 框架 `#[derive(Validate)]` + `#[validate(custom(...))]` 挂载到结构体字段 | 校验规则随字段声明，替代 `data_valid` 硬编码清单 |
-| **强类型落点（重构）** | 强类型模型迁入 `schema/model.rs`（`IBISFile`/`IBISModel`/`IBISCornerValue`/`IBISTableData`）；废弃 `backend/ibis_structure.rs` | 与 validator 声明式校验、serde 输出契合 |
-| **keyword 作用域树（重构）** | `KEYWORD_REGISTRY`（`keyword.rs`）数据迁入 `ibis_schema.toml`，废弃 `keyword.rs` | keyword 架构单一数据源 |
-| **数据校验（重构）** | `data_valid` 对 `IBISFile.validate()` 递归映射 `ValidationErrors` → `SemanticError::ValidationFailed`，另做符号引用检查 | 声明式校验 + 宽松/严格双模式不变 |
-| **依赖（重构）** | `ibis2ibstoml` 新增 `serde` / `toml` / `validator`；`indexmap` 开启 `serde` feature | 加载 schema、结构体 serde、validator 派生 |
-| **根包兼容（重构）** | `ibis_parser::ibis_parser::model` re-export `ibis2ibstoml::schema::model` | 保持 `ibis_parser::*` 路径可用 |
-
-## 6.4 参考文件
+# 6 参考文件
 
 | 文件 | 内容 |
 |------|------|
-| [`ibis_parser_architecture.md`](ibis_parser_architecture.md:1) | 根包 `ibis_parser` 的 re-export 兼容层说明 |
-| [`ibis_struct.toml`](ibis_struct.toml:1) | 强类型序列化参考 schema（数值形态） |
+| [`crates/ibis2ibstoml/src/schema/ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1) | IBIS 7.0 结构规范（唯一数据源，含 `__schema__` / `__header__` / `__param__` 约定说明） |
+| [`crates/ibis2ibstoml/src/lib.rs`](../crates/ibis2ibstoml/src/lib.rs:1) | 流水线编排点与公共 API |
+| [`crates/ibis2ibstoml/src/backend/mod.rs`](../crates/ibis2ibstoml/src/backend/mod.rs:1) | backend 三步走接线与严格 / 宽松入口 |
+| [`crates/ibis2ibstoml/src/backend/content_parse.rs`](../crates/ibis2ibstoml/src/backend/content_parse.rs:1) | 类型化解析树的设计说明与实现 |
+| [`crates/ibis2ibstoml/src/emitter/toml.rs`](../crates/ibis2ibstoml/src/emitter/toml.rs:1) | TOML 布局规则与值形态映射 |
+| [`docs/IBIS Version 7.0 specification.pdf`](../docs/IBIS%20Version%207.0%20specification.pdf:1) | IBIS 7.0 规范原文（schema 的抄写依据） |
 | [`coding_standards.md`](coding_standards.md:1) | 编码规范 |
 | [`architecture.drawio`](architecture.drawio:1) | 架构示意图 |

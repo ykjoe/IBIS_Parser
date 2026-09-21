@@ -20,13 +20,10 @@
 use crate::frontend::SectionNode;
 use crate::schema::{
     file_header_section, find_child, find_descendant, find_root, load_schema, normalize_keyword,
-    Occurrence, SectionSpec,
+    Occurrence, SectionSpec, FILE_HEADER_CONTAINER,
 };
 
 use super::{Diagnostic, ValidationCollector};
-
-/// The virtual container the frontend uses to group file header fields.
-const FILE_HEADER_CONTAINER: &str = "File_Header";
 
 /// One keyword annotated by the preprocess phase.
 #[derive(Debug, Clone)]

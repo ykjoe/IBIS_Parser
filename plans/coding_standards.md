@@ -1,6 +1,6 @@
 # IBIS Parser — 编程规范手册
 
-> **作用域**：本项目全部 Rust 源文件、PEST 语法文件、测试文件。
+> **作用域**：本项目全部 Rust 源文件与测试文件。
 > **目标**：建立一套人与 AI 协作时共同遵守的、可自动化检查的编码契约，消除歧义、保证一致性。
 
 ---
@@ -46,107 +46,17 @@
 // =============================================================================
 ```
 
-每个 `.pest` 文件：
-
-```
-// =============================================================================
-// file_name — one-line description
-//
-// Design constraints and usage boundary notes.
-// =============================================================================
-```
-
 ---
 
 ## 2. PEST 语法规范
 
-### 2.1 规则命名语义
-
-所有 PEST 规则必须遵循以下前缀约定：
-
-| 前缀 | 用途 | 示例 |
-|------|------|------|
-| `kw_` | IBIS 关键词头（`[Keyword]`） | `kw_component`, `kw_ibis_ver` |
-| `line_` | 单行完整规则（关键词头 + 值） | `line_component`, `line_pin_data` |
-| `header_` | 文件头部专用规则 | `header_ibis_ver`, `header_notes_line` |
-| `si_` | 物理量 / 数学表达式 | `si_number`, `si_prefix` |
-
-**禁止**：
-- 不使用前缀的顶层规则（通用基元如 `ident`, `WHITESPACE` 除外）
-- 模糊命名如 `value`, `data`, `content` 作为顶层规则名
-
-### 2.2 布局与格式
-
-```pest
-// ✅ 正确：多层嵌套必须换行 + 垂直对齐
-si_number = @{
-    ("+" | "-")? ~
-    (
-        (ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT*) |
-        ("." ~ ASCII_DIGIT+) |
-        ASCII_DIGIT+
-    ) ~
-    ( ^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+ )? ~
-    ( si_prefix ~ unit? | unit )?
-}
-
-// ❌ 错误：多层 ~ 和 | 挤在单行
-si_number = @{ ("+" | "-")? ~ (ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT*) | ("." ~ ASCII_DIGIT+) | ASCII_DIGIT+ ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)? ~ (si_prefix ~ unit? | unit)? }
-```
-
-**规则**：
-1. 任何包含 `~` 或 `|` 的规则，若顶级选择 / 序列超过 2 个元素，必须换行
-2. 子表达式缩进 4 个空格，同层操作符垂直对齐
-3. 原子规则（`@{ ... }`）若内部简单（≤3 个元素）可保持单行
-4. 规则之间空 1 行分隔；区块之间空 3–4 行
-
-### 2.3 规则类型标注
-
-每条规则必须显式标注类型：
-
-| 标注 | 含义 | 行为 |
-|------|------|------|
-| `{ ... }` | 复合规则（默认静默） | 内部规则不暴露到 Pairs |
-| `_{ ... }` | 静默规则 | 完全从 AST 中隐藏 |
-| `@{ ... }` | 原子规则 | 内部视为一个不可分割的 token |
-| `!{ ... }` | 推送规则 | 保留所有内部结构 |
-
-### 2.4 区块组织
-
-PEST 文件必须按以下区块顺序组织，区块间用分隔线隔开：
-
-```pest
-// =============================================================================
-// Shared primitives
-// =============================================================================
-
-// -------------------------- basic symbols --------------------------
-WHITESPACE = ...
-comment_line = ...
-
-// -------------------------- math expressions --------------------------
-si_prefix = ...
-si_number = ...
-
-// =============================================================================
-// File Header Section
-// =============================================================================
-
-// ---------------------------- keywords ----------------------------
-kw_ibis_ver = ...
-
-// ---------------------------- contents ----------------------------
-header_ibis_ver = ...
-```
-
-**规则**：
-- 区块分隔线：`// =============================================================================`（77 列等号）
-- 子区块分隔线：`// -------------------------- name --------------------------`（60 列减号）
-- 关键字子区块：`// ============================ keywords ============================`（42 个等号）
-
-### 2.5 规则数量控制
-
-单个 PEST 文件的规则数量不应超过 60 条。当语法复杂度超过此阈值时，必须拆分为多个 `.pest` 文件。
+> **状态：已废弃，本章规则不再适用。**
+>
+> 本项目曾用 pest 语法文件（`schema/ibis.pest`）承载词法原语与关键词识别。自 frontend 改为**直接从 [`ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1) 读取文档结构**后，crate 内**已不存在任何 `.pest` 文件**，`pest` / `pest_derive` 依赖也已移除，本章的全部规则因此失去约束对象。
+>
+> 旧语法仅作历史参考归档于 [`plans/legacy/ibis.pest`](legacy/ibis.pest:1)，**不参与编译，也不得重新接入构建**。新增或调整 IBIS 结构一律修改 `ibis_schema.toml`。
+>
+> 保留本章编号，以维持后续章节编号与目录锚点稳定。
 
 ---
 
@@ -165,7 +75,7 @@ header_ibis_ver = ...
 
 | 类别 | 风格 | 示例 |
 |------|------|------|
-| 类型 / enum / trait | `PascalCase` | `IbisParser`, `Keyword`, `ParserState` |
+| 类型 / enum / trait | `PascalCase` | `SectionSpec`, `ParsedNode`, `ParserState` |
 | 变量 / 函数 | `snake_case` | `trimmed_line`, `output_buffer`, `extract_value_after_keyword` |
 | 常量 | `SCREAMING_SNAKE_CASE` | `FILE_HEADER_KEYWORDS`, `MAX_LINE_LENGTH` |
 | 宏 | `snake_case!` | `try_parse!`, `assert_eq!` |
@@ -224,11 +134,12 @@ match value { Some(x) => x, None => return None }
 
 ```rust
 // ✅ 正确
-if let Ok(parsed_pairs) = IbisParser::parse(Rule::keyword_header, keyword_header_part) {
-    let first_pair = parsed_pairs.into_iter().next()?;
+if let Some(keyword_name) = parser::keyword_name(trimmed_line) {
+    let keyword_level = classify_block_level(&keyword_name);
+    process_keyword(&keyword_name, keyword_level);
 }
 // ❌ 错误
-if let Ok(pairs) = IbisParser::parse(Rule::keyword_header, keyword_header_part) { let first = pairs.into_iter().next()?; }
+if let Some(keyword_name) = parser::keyword_name(trimmed_line) { process_keyword(&keyword_name); }
 ```
 
 ### 4.3 循环
@@ -252,16 +163,12 @@ for line in content.lines() { let Some(c) = clean(line) else { continue; }; proc
 
 ```rust
 // ✅ 正确
-let parsed_pairs = IbisParser::parse(Rule::keyword_header, keyword_header_part)?;
-let first_pair = parsed_pairs.into_iter().next()?;
-let keyword_pair = first_pair.into_inner().next()?;
-let keyword_name = keyword_pair.as_str().trim();
+let marks = mark_keywords(tree, &mut collector);
+let first_mark = marks.first()?;
+let scope_path = first_mark.scope_path.clone();
 
 // ❌ 错误：超过 2 级链式调用
-let keyword_name = IbisParser::parse(Rule::keyword_header, keyword_header_part)?
-    .into_iter().next()?
-    .into_inner().next()?
-    .as_str().trim();
+let scope_path = mark_keywords(tree, &mut collector).first()?.scope_path.clone();
 ```
 
 **规则**：任何包含 `.next()` / `.unwrap()` / `?` 的链条超过 2 级调用，必须拆分为具名步骤。
@@ -323,7 +230,7 @@ fn is_array_parent(keyword: &str) -> bool {
 #[derive(Debug, Clone)]
 struct ParsedBlock {
     keyword: String,       // Raw keyword name (e.g., "Component", "IBIS ver").
-    rule: Rule,            // Pest rule variant that matched this header.
+    level: usize,          // Nesting level read from the schema.
     content: Vec<String>,  // Content lines belonging to this block.
 }
 
@@ -666,7 +573,7 @@ const FILE_HEADER_KEYWORDS: &[&str] = &[
 //!
 //! This crate provides:
 //!
-//! - Full IBIS 7.0 grammar parsing (generated via PEST)
+//! - Full IBIS 7.0 structure parsing, driven by `ibis_schema.toml`
 //! - Complete pipeline: lexical analysis → syntax analysis → semantic construction
 //! - TOML serialization output
 //! - Support for all standard sections: `Component`, `Model`, `Pin`, etc.
@@ -840,12 +747,11 @@ use std::fs;
 use std::path::Path;
 
 // 2. 外部 crate
-use pest::iterators::Pairs;
-use pest::Parser;
+use toml::Value;
 
 // 3. 内部模块
-use crate::ibis2ibstoml::parser::IbisParser;
-use crate::ibis2ibstoml::parser::Rule;
+use crate::frontend::ast_builder::ParsedBlock;
+use crate::schema::find_level;
 ```
 
 ### 10.2 循环依赖禁止
@@ -868,7 +774,6 @@ use crate::ibis2ibstoml::parser::Rule;
 - [ ] 是否有超过 2 级的 `.next()` / `.unwrap()` / `?` 链式调用？（→ 必须拆分为具名变量）
 - [ ] match / if-let / 循环体是否挤在单行？（→ 必须展开）
 - [ ] 是否用了 `String` 做状态标记？（→ 必须改为 `enum`）
-- [ ] PEST 规则是否有多层 `~` / `|` 挤在单行？（→ 必须换行对齐）
 - [ ] 函数名是否有模糊缩写？（如 `kw`, `sec`, `esc` → 必须展开）
 - [ ] 返回值是否为 `Option` 或 `Result`？（→ 禁止用哨兵值）
 - [ ] 所有 `pub` 函数是否有完整的 `///` 文档注释（含 `# Parameters`, `# Returns`, `# Errors`, `# Panics`）？（→ 必须添加）
@@ -916,8 +821,8 @@ let trimmed_line = line.trim();              // ✅ 完整语义
 let t = line.trim();                          // ❌ 单字母
 
 // ──── 链式调用 ────
-let first_pair = pairs.into_iter().next()?;  // ✅ 具名中间变量
-let value = pairs.into_iter().next()?.into_inner().next()?;  // ❌ 超过 2 级
+let first_mark = marks.first()?;                                   // ✅ 具名中间变量
+let scope_path = mark_keywords(tree).first()?.scope_path.clone();  // ❌ 超过 2 级
 
 // ──── 状态机 ────
 enum ParserState { InHeader, InModel(String) }  // ✅ 强类型
@@ -934,10 +839,4 @@ match value {
 }
 match value { Some(x) => x, None => return None }  // ❌ 单行
 
-// ──── PEST 多行 ────
-si_number = @{                                // ✅ 换行对齐
-    ("+" | "-")? ~
-    (ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT*)
-};
-si_number = @{ ("+" | "-")? ~ (ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT*) };  // ❌ 单行
 ```

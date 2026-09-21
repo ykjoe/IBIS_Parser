@@ -37,11 +37,10 @@
 
 use std::fmt::Write as _;
 
-use crate::backend::{Corner, ParsedField, ParsedNode, ParsedTable, ParsedValue};
-use crate::schema::Occurrence;
-
-/// The virtual container holding the file header entries.
-const FILE_HEADER_CONTAINER: &str = "File_Header";
+use crate::backend::ParsedNode;
+use crate::schema::{
+    Corner, Occurrence, ParsedField, ParsedTable, ParsedValue, FILE_HEADER_CONTAINER,
+};
 
 /// Renders the parsed tree as a TOML document.
 ///
@@ -165,6 +164,8 @@ impl TomlWriter {
 /// Each function takes the fragment and returns a `String` without writing to a
 /// buffer, so [`TomlWriter`](super::TomlWriter) keeps no quoting or escaping detail.
 mod text {
+    use crate::schema::CORNER_NAMES;
+
     use super::{Corner, ParsedTable, ParsedValue};
 
     /// Renders one value as TOML.
@@ -185,7 +186,8 @@ mod text {
     /// `{ header = ["typ", "min", "max"], data = ["typ", "min", "max"] }`, which keeps
     /// the corner readable on a single line while using the same shape as any table.
     fn render_corner(corner: &Corner) -> String {
-        let header_values = ["typ".to_string(), "min".to_string(), "max".to_string()];
+        let header_values: Vec<String> =
+            CORNER_NAMES.iter().map(|name| name.to_string()).collect();
         let header = render_string_array(&header_values);
         let row_values = [corner.0.clone(), corner.1.clone(), corner.2.clone()];
         let data = render_string_array(&row_values);

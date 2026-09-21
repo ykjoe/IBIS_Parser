@@ -42,8 +42,8 @@
 # `__param__` 的第一项，使列名与数据列一一对齐；手册确实给出名字的首列
 # （如 [Series Switch Groups] 的 On/Off、[Add Submodel] 的 submodel_name）沿用原名。
 #
-# 用途：backend 结构校验、symbol_table_build 通用递归解释器、frontend pest
-#       生成、示例模板。
+# 用途：backend 结构校验、symbol_table_build 通用递归解释器、frontend 关键字
+#       层级判定（find_level）、示例模板。
 # =============================================================================
 
 # -----------------------------------------------------------------------------

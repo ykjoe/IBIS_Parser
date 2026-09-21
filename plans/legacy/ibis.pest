@@ -1,4 +1,23 @@
 // =============================================================================
+// ibis.pest — ARCHIVED REFERENCE ONLY, NOT PART OF THE BUILD
+//
+// This grammar used to be the pest-based lexical/syntax layer of the frontend.
+// It is no longer compiled: the frontend reads the document structure straight
+// out of `crates/ibis2ibstoml/src/schema/ibis_schema.toml` (the single
+// structural data source), and the `pest` / `pest_derive` dependencies were
+// dropped from `Cargo.toml`.
+//
+// Reason for removal: this grammar hard-coded the keyword set (47 `kw_*` rules)
+// and had already drifted from the schema, it was case-sensitive, and its
+// whole-file rule made a single unmatched line fail the entire parse.
+//
+// Keep this file for historical reference only. Do NOT wire it back into the
+// build — extend `ibis_schema.toml` instead.
+//
+// The original banner follows.
+// =============================================================================
+
+// =============================================================================
 // ibis.pest — pest grammar for IBIS file parsing
 //
 // Design constraints:

@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pest = "2.7"
-pest_derive = "2.7"
 indexmap = { version = "2.7", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 # `preserve_order` 是硬性要求：`__param__` 的声明顺序即字段顺序

@@ -45,7 +45,10 @@ pub(crate) mod content_parse;
 pub(crate) mod pre_process;
 pub(crate) mod validation;
 
-pub use content_parse::{content_parse, Corner, ParsedField, ParsedNode, ParsedTable, ParsedValue};
+// The value model lives in `schema` (it describes what the specification means);
+// it is re-exported here so the historical `backend::…` paths keep resolving.
+pub use crate::schema::{Corner, ParsedField, ParsedTable, ParsedValue};
+pub use content_parse::{content_parse, ParsedNode};
 pub use validation::{Diagnostic, Rule, Severity, ValidationReport};
 pub(crate) use validation::ValidationCollector;
 

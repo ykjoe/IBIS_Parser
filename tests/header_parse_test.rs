@@ -1,8 +1,10 @@
 //! Integration tests for IBIS file header parsing.
 //!
-//! Parses the file header from a real sample IBIS file and verifies each field.
-//! Uses the public [`ibis2ibstoml::frontend::parse`] API (the compat helpers
-//! are internal to the frontend and not part of the public interface).
+//! Parses the file header from a real sample IBIS file and verifies each field,
+//! exercising both public layers:
+//!
+//! - `ibis2ibstoml::frontend::parse` — the raw AST (`[File_Header]` virtual node);
+//! - `ibis2ibstoml::parse_to_parsed` — the backend's typed parsed tree.
 //!
 //! Run with:
 //!
@@ -11,7 +13,7 @@
 //! ```
 
 // =============================================================================
-// Integration test: parse File Header from sample IBIS file → TOML output
+// Integration test: parse the File Header from a sample IBIS file
 //
 // Run with:  cargo test --test header_parse_test -- --nocapture
 // =============================================================================
@@ -20,118 +22,94 @@ use std::fs;
 use std::path::Path;
 
 use ibis2ibstoml::frontend::{parse, NodeKind, SectionNode};
-use ibis_parser::ibis_parser::model::IBIS_File_Header;
+use ibis2ibstoml::{parse_to_parsed, ParsedNode, ParsedValue};
 
-/// Build an [`IBIS_File_Header`] from the `[File_Header]` virtual node of the
-/// frontend AST.
+/// Reads one file header entry value out of the parsed tree.
 ///
-/// Walks the root [`SectionNode`] list, finds the `File_Header` node, and maps
-/// each child (a file header field) into the strongly-typed header struct.
-///
-/// # Parameters
-///
-/// * `tree` — The root-level section tree returned by [`parse`].
-///
-/// # Returns
-///
-/// The parsed header struct.
-fn header_from_tree(tree: &[SectionNode]) -> IBIS_File_Header {
-    let mut header = IBIS_File_Header::default();
-
-    let file_header = tree.iter().find(|node| node.keyword == "File_Header");
-    let Some(file_header) = file_header else {
-        return header;
-    };
-    assert_eq!(file_header.kind, NodeKind::FileHeader);
-
-    for child in &file_header.children {
-        let value = child.content.join("\n");
-        match child.keyword.as_str() {
-            "IBIS ver" => header.ibis_ver = value,
-            "Comment Char" => header.comment_char = Some(value),
-            "File name" => header.file_name = value,
-            "File Rev" => header.file_rev = value,
-            "Date" => header.date = Some(value),
-            "Source" => header.source = Some(value),
-            "Notes" => header.notes = Some(value),
-            "Disclaimer" => header.disclaimer = Some(value),
-            "Copyright" => header.copyright = Some(value),
-            _ => {}
-        }
+/// Takes the parsed `[File_Header]` node, the canonical entry keyword (e.g.
+/// `"IBIS_Ver"`) and the entry's own field key (e.g. `"ibis_ver"`); returns the
+/// entry text, joining multi-line entries with newlines.
+fn header_entry(header: &ParsedNode, keyword: &str, key: &str) -> Option<String> {
+    let entry = header.children.iter().find(|child| child.keyword == keyword)?;
+    let field = entry.fields.iter().find(|field| field.key == key)?;
+    match &field.value {
+        ParsedValue::Text(text) => Some(text.clone()),
+        ParsedValue::Lines(lines) => Some(lines.join("\n")),
+        _ => None,
     }
-
-    header
 }
 
-/// Parse the file header section from an IBIS file path via the public API.
+/// Parses the file header from an IBIS file path through both public layers.
 ///
-/// # Parameters
-///
-/// * `path` — Path to an `.ibs` file. Accepts any type implementing [`AsRef<Path>`].
-///
-/// # Returns
-///
-/// A tuple of:
-/// * `(IBIS_File_Header, Vec<String>)` — The parsed header struct and the raw
-///   header field keywords as they appear in the AST.
+/// Takes a `path` to an `.ibs` file; returns the raw AST keywords of the header
+/// fields together with the parsed `[File_Header]` node.
 ///
 /// # Panics
 ///
-/// Panics if the file cannot be read.
-fn parse_file_header<P: AsRef<Path>>(path: P) -> (IBIS_File_Header, Vec<String>) {
-    let content = fs::read_to_string(path).expect("Failed to read IBIS file");
-    let tree = parse(&content).expect("Failed to parse IBIS file");
+/// Panics when the file cannot be read, when either layer fails, or when the AST
+/// carries no `[File_Header]` node.
+fn parse_file_header<P: AsRef<Path>>(path: P) -> (Vec<String>, ParsedNode) {
+    let content = fs::read_to_string(path).expect("failed to read IBIS file");
 
-    let header = header_from_tree(&tree);
+    let tree: Vec<SectionNode> = parse(&content).expect("frontend parse failed");
+    let header_node = tree
+        .iter()
+        .find(|node| node.keyword == "File_Header")
+        .expect("missing [File_Header] node");
+    assert_eq!(header_node.kind, NodeKind::FileHeader);
+    let raw_keywords: Vec<String> = header_node
+        .children
+        .iter()
+        .map(|child| child.keyword.clone())
+        .collect();
 
-    let file_header = tree.iter().find(|node| node.keyword == "File_Header");
-    let raw_lines: Vec<String> = file_header
-        .map(|node| {
-            node.children
-                .iter()
-                .map(|child| child.keyword.clone())
-                .collect()
-        })
-        .unwrap_or_default();
+    let parsed = parse_to_parsed(&content).expect("backend parse failed");
+    let parsed_header = parsed
+        .into_iter()
+        .find(|node| node.keyword == "File_Header")
+        .expect("missing parsed [File_Header] node");
 
-    (header, raw_lines)
+    (raw_keywords, parsed_header)
 }
 
 #[test]
 fn test_parse_file_header_from_sample() {
-    let (header, raw_lines) = parse_file_header("tests/examples/f103c8.ibs");
+    let (raw_keywords, header) = parse_file_header("tests/examples/f103c8.ibs");
 
     println!("========================================");
     println!("Raw header fields (from AST):");
     println!("========================================");
-    for line in &raw_lines {
-        println!("  {}", line);
+    for keyword in &raw_keywords {
+        println!("  {keyword}");
     }
+
+    let ibis_ver = header_entry(&header, "IBIS_Ver", "ibis_ver");
+    let comment_char = header_entry(&header, "Comment_Char", "comment_char");
+    let file_name = header_entry(&header, "File_Name", "file_name");
+    let file_rev = header_entry(&header, "File_Rev", "file_rev");
+    let date = header_entry(&header, "Date", "date");
+    let source = header_entry(&header, "Source", "source");
+    let notes = header_entry(&header, "Notes", "notes");
 
     println!("\n========================================");
     println!("Parsed header fields:");
     println!("========================================");
-    println!("  ibis_ver:      {:?}", header.ibis_ver);
-    println!("  comment_char:  {:?}", header.comment_char);
-    println!("  file_name:     {:?}", header.file_name);
-    println!("  file_rev:      {:?}", header.file_rev);
-    println!("  date:          {:?}", header.date);
-    println!("  source:        {:?}", header.source);
-    println!("  notes:         {:?}", header.notes);
-    println!("  disclaimer:    {:?}", header.disclaimer);
-    println!("  copyright:     {:?}", header.copyright);
+    println!("  ibis_ver:      {ibis_ver:?}");
+    println!("  comment_char:  {comment_char:?}");
+    println!("  file_name:     {file_name:?}");
+    println!("  file_rev:      {file_rev:?}");
+    println!("  date:          {date:?}");
+    println!("  source:        {source:?}");
+    println!("  notes:         {notes:?}");
 
-    // Verify required fields
-    assert!(!header.ibis_ver.is_empty(), "IBIS ver should not be empty");
-    assert!(
-        !header.file_name.is_empty(),
-        "File name should not be empty"
-    );
-    assert!(!header.file_rev.is_empty(), "File rev should not be empty");
+    // Required fields must be present and non-empty.
+    assert!(!ibis_ver.clone().unwrap_or_default().is_empty(), "IBIS ver is empty");
+    assert!(!file_name.clone().unwrap_or_default().is_empty(), "File name is empty");
+    assert!(!file_rev.clone().unwrap_or_default().is_empty(), "File Rev is empty");
 
-    // Sample file specific checks
-    assert_eq!(header.ibis_ver, "2.1");
-    assert_eq!(header.file_name, "f103c8.ibs");
-    assert_eq!(header.file_rev, "1.1");
-    assert_eq!(header.date.as_deref(), Some("12-08-2024"));
+    // Sample-specific values.
+    assert_eq!(ibis_ver.as_deref(), Some("2.1"));
+    assert_eq!(file_name.as_deref(), Some("f103c8.ibs"));
+    assert_eq!(file_rev.as_deref(), Some("1.1"));
+    assert_eq!(date.as_deref(), Some("12-08-2024"));
 }

@@ -438,9 +438,7 @@ mod valid_param {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::content_parse::{ParsedField, ParsedTable, ParsedValue};
-    use crate::backend::Corner;
-    use crate::schema::Occurrence;
+    use crate::schema::{Corner, Occurrence, ParsedField, ParsedTable, ParsedValue};
 
     /// Builds a parsed node from field values.
     fn parsed(keyword: &str, fields: Vec<ParsedField>, children: Vec<ParsedNode>) -> ParsedNode {
