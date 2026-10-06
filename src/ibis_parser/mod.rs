@@ -15,5 +15,5 @@
 
 pub use ibis2ibstoml::backend as keyword_hierarchy;
 
-// 兼容旧引用路径 `ibis_parser::ibis_parser::model`。
+// Compatibility alias for the legacy import path `ibis_parser::ibis_parser::model`.
 pub use ibis2ibstoml::backend as model;

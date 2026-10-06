@@ -1,25 +1,30 @@
-//! 语义层与语法层 —— `ibis_schema.toml` 的两面。
+//! The semantic and syntactic sides of `ibis_schema.toml`.
 //!
-//! 本文件只做两件事，各占一个内联模块：
+//! This file does exactly two things, one per inline module:
 //!
-//! - `types`：**语义层**。schema.toml 里每一项「是什么意思」——节段与参数的
-//!   类型、各元数据属性的取值集合、固定列名与固定键名、层级取值、以及解析出来
-//!   的值模型（[`ParsedValue`] / [`Corner`] / [`ParsedTable`] / [`ParsedField`]）；
-//! - `naming`：**语法层**。怎么读 schema.toml 里的字符串——关键词归一化、
-//!   元数据键识别、输出键拼写（[`normalize_keyword`] / [`to_snake_key`] /
-//!   [`is_metadata_key`]）。
+//! - `types` — the **semantic** side: what every entry in schema.toml *means*
+//!   (section and parameter types, the accepted value sets of the metadata
+//!   attributes, the fixed column and key names, the level constants, and the
+//!   parsed value model [`ParsedValue`] / [`Corner`] / [`ParsedTable`] /
+//!   [`ParsedField`]);
+//! - `naming` — the **syntactic** side: how the strings in schema.toml are read
+//!   (keyword normalization, metadata-key detection, output-key spelling —
+//!   [`normalize_keyword`] / [`to_snake_key`] / [`is_metadata_key`]).
 //!
-//! 本文件不读 TOML：它只说 schema「是什么」。
+//! This file does not read TOML: it only says what the schema *is*.
 
 // =============================================================================
-// spec — `ibis_schema.toml` 的语义层与语法层
+// spec — the semantic and syntactic sides of `ibis_schema.toml`
 //
 // Design constraints:
-//   - `types` 是语义层，`naming` 是语法层；两层不混放；
-//   - 每个元数据枚举自带词汇表：接受的拼写只在它的 `ALL` 里出现一次，
-//     `from_schema_str` 与 `as_schema_str` 都从 `ALL` 读，新增取值只改一处；
-//   - 纯数据加纯字符串函数：无 I/O、无缓存、无 panic；
-//   - `SectionSpec` 保留 `__param__` 与子节段的声明顺序，两者在下游都有含义。
+//   - `types` is the semantic side and `naming` is the syntactic side; the two
+//     never mix;
+//   - every metadata enum carries its own vocabulary: an accepted spelling
+//     appears exactly once, inside its `ALL` table, and both `from_schema_str`
+//     and `as_schema_str` read from `ALL`, so a new value changes one place;
+//   - data plus pure string functions only: no I/O, no cache, no panic;
+//   - `SectionSpec` keeps the declaration order of `__param__` entries and of
+//     child sections; both carry meaning downstream.
 // =============================================================================
 
 pub use naming::{is_metadata_key, normalize_keyword, to_snake_key};
@@ -29,9 +34,9 @@ pub use types::{
     IV_COLUMN_NAMES, TERMINATOR_KEYWORD, UNMATCHED_LINES_KEY, VT_COLUMN_NAMES,
 };
 
-/// 语义层 —— schema.toml 里每一项的含义。
+/// The semantic side — the meaning of every entry in schema.toml.
 mod types {
-    // ───────────────────────── 节段与参数 ─────────────────────────
+    // ───────────────────────── Sections and parameters ─────────────────────────
 
     /// How often a keyword may appear inside its parent scope.
     ///
@@ -202,7 +207,7 @@ mod types {
         pub children: Vec<SectionSpec>,   // Ordered child keyword sections.
     }
 
-    // ───────────────────────── 名称与键 ─────────────────────────
+    // ───────────────────────── Names and keys ─────────────────────────
 
     /// Name of the virtual container that groups the file header entries.
     ///
@@ -231,7 +236,7 @@ mod types {
     /// Element names of a corner triple, in the order [`Corner`] stores them.
     pub const CORNER_NAMES: [&str; 3] = ["typ", "min", "max"];
 
-    // ───────────────────────── 层级 ─────────────────────────
+    // ───────────────────────── Levels ─────────────────────────
 
     /// Keyword levels — the nesting level of a keyword inside the schema tree.
     ///
@@ -256,7 +261,7 @@ mod types {
         pub const SECOND_LEVEL: usize = 2;
     }
 
-    // ───────────────────────── 值模型 ─────────────────────────
+    // ───────────────────────── Value model ─────────────────────────
 
     /// A corner triple in IBIS order: typical, minimum, maximum.
     ///
@@ -312,7 +317,7 @@ mod types {
     }
 }
 
-/// 语法层 —— 怎么读 schema.toml 里的字符串。
+/// The syntactic side — how the strings in schema.toml are read.
 mod naming {
     /// Whether a schema key carries keyword metadata (`__schema__` / `__header__` /
     /// `__param__`).

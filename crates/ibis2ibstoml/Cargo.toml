@@ -6,8 +6,5 @@ edition = "2024"
 [dependencies]
 indexmap = { version = "2.7", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
-# `preserve_order` 是硬性要求：`__param__` 的声明顺序即字段顺序
-# （如 `[Component.Pin.__param__]` 的 5 列、`[Model.Ramp.__param__]` 的三元组顺序），
-# 默认的 BTreeMap 会按字母序打乱，导致列序与取值顺序错乱。
 toml = { version = "1.1", features = ["preserve_order"] }
-validator = { version = "0.19", features = ["derive"] }
+validator = { version = "0.19.0", features = ["derive"] }

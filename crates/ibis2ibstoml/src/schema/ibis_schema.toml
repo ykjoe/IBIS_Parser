@@ -1,49 +1,54 @@
 # =============================================================================
-# ibis_schema.toml — IBIS 7.0 结构（唯一 IBIS 结构数据源）
+# ibis_schema.toml — IBIS 7.0 structure (the single IBIS structure data source)
 #
-# 组织约定：
-#   - 每个 keyword 一个同名 section（`[X]` 单实例 / `[[X]]` 多实例）；
-#   - 子 keyword 写作父节段的子表（如 `[Component.Pin]`、`[Model.Ramp]`）；
-#   - 每个 section 均含三个元数据键，描述该 keyword 的结构：
+# Organization conventions:
+#   - one section per keyword, named identically (`[X]` single / `[[X]]` multiple);
+#   - a child keyword is written as a sub-table of its parent section
+#     (for example `[Component.Pin]`, `[Model.Ramp]`);
+#   - every section carries three metadata keys describing the keyword structure:
 #
 #       __schema__ = {required = <bool>, format = "<kind>"}
-#           required — 该 keyword 是否必须出现；
-#           format   — 该 keyword 下 header / param / 文本体如何组织：
-#                      "file_header" 文件头条目
-#                      "text"        单条记录（标识符可入 header，其余入 param）
-#                      "textlines"   多行自由文本
-#                      "table"       表格或列表（行式数据）
-#                      "IV-table"    I-V 曲线表；列名固定为 Voltage / I(typ) / I(min) / I(max)
-#                      "VT-table"    V-t 波形表；fixture param 照常解析，其余行成表，
-#                                    列名固定为 Time / V(typ) / V(min) / V(max)
+#           required — whether the keyword must appear;
+#           format   — how the header / params / body text below the keyword are
+#                      organized:
+#                      "file_header" a file header entry
+#                      "text"        a single record (identifier may go to header, the rest to params)
+#                      "textlines"   free text spanning several lines
+#                      "table"       tabular or list-shaped data (row-oriented)
+#                      "IV-table"    I-V curve table; columns fixed to Voltage / I(typ) / I(min) / I(max)
+#                      "VT-table"    V-t waveform table; fixture params parsed as usual, remaining rows
+#                                    form a table with columns fixed to Time / V(typ) / V(min) / V(max)
 #
 #       __header__ = {format = "<kind>"}
-#           keyword 之后同一行紧跟的文字如何组织：
-#                      "none"         关键字后无文字
-#                      "text"         一个文本 / 标识符 token
-#                      "textlines"    多行自由文本
-#                      "table_header" 表头行（列名）
-#                      "corner"       一个 corner 三元组（typ min max）
+#           how the text on the same line right after the keyword is organized:
+#                      "none"         no text after the keyword
+#                      "text"         a single text / identifier token
+#                      "textlines"    free text spanning several lines
+#                      "table_header" a header row naming the columns
+#                      "corner"       a corner triple (typ min max)
 #
 #       __param__ = "none" | { name = "<type>", ... } | [X.__param__]
-#           该 keyword 携带的具名 sub-parameter；条目较多时另起
-#           `[X.__param__]` 子表。type ∈ {text, quantity, corner}：
-#                      text     文本 / 枚举 / 名称
-#                      quantity 带单位的物理量（数值 + 单位）
-#                      corner   角点三元组（typ min max）
+#           the named sub-parameters of the keyword; when there are many entries,
+#           use a separate `[X.__param__]` sub-table. type ∈ {text, quantity, corner}:
+#                      text     text / enumeration / name
+#                      quantity a physical quantity with a unit (number + unit)
+#                      corner   a corner triple (typ min max)
 #
-# 行式 section 的首列：IBIS 手册的表头行常常不给第一列命名（数据的首列是
-# pin_name / pad_name / 域名等标识符），例如
+# First column of a row-oriented section: the IBIS manual's header row often does
+# not name the first column (the first data column is an identifier such as
+# pin_name / pad_name / domain name), for example
 #
 #     [Pin] signal_name model_name R_pin L_pin C_pin
 #     1     RAS0#       Buffer1    200.0m 5.0nH 2.0pF
 #
-# 数据行比表头多出一列。此类「手册未命名」的首列统一记为 `col0`，并声明为
-# `__param__` 的第一项，使列名与数据列一一对齐；手册确实给出名字的首列
-# （如 [Series Switch Groups] 的 On/Off、[Add Submodel] 的 submodel_name）沿用原名。
+# The data row has one more column than the header. Such unnamed first columns are
+# recorded uniformly as `col0` and declared as the first `__param__` entry, so the
+# column names line up with the data columns; a first column the manual does name
+# (such as On/Off of [Series Switch Groups] and submodel_name of [Add Submodel])
+# keeps its original name.
 #
-# 用途：backend 结构校验、symbol_table_build 通用递归解释器、frontend 关键字
-#       层级判定（find_level）、示例模板。
+# Used by: backend structural validation, the symbol_table_build generic recursive
+#          interpreter, frontend keyword level resolution (find_level), and example templates.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -229,16 +234,17 @@ __param__  = {si_location = "text", timing_location = "text"}
         [[Component.Begin_EMI_Component.Pin_EMI]]
         __schema__ = {required = false, format = "table"}
         __header__ = {format = "table_header"}
-        # 手册：「Each line must contain three columns. The first column shall
-        # contain the pin name.」——首列是引脚名，表头行（domain_name clock_div）
-        # 只命名了后两列。
+        # Manual: "Each line must contain three columns. The first column shall
+        # contain the pin name." — the first column is the pin name; the header
+        # row (domain_name clock_div) names only the last two columns.
         __param__  = {col0 = "text", domain_name = "text", clock_div = "text"}
 
         [[Component.Begin_EMI_Component.Pin_Domain_EMI]]
         __schema__ = {required = false, format = "table"}
         __header__ = {format = "table_header"}
-        # 手册：「The first column must contain the domain_name.」——首列是域名，
-        # 表头行（percentage）只命名了百分比列。
+        # Manual: "The first column must contain the domain_name." — the first
+        # column is the domain name; the header row (percentage) names only the
+        # percentage column.
         __param__  = {col0 = "text", percentage = "quantity"}
 
 # -----------------------------------------------------------------------------
@@ -296,8 +302,8 @@ __header__ = {format = "text"}
     __schema__ = {required = false, format = "text"}
     __header__ = {format = "none"}
 
-        # [Model Spec] 的参数清单与顺序取自 IBIS 7.0 手册，
-        # 全部为角点三元组（typ min max）。
+        # The [Model Spec] parameter list and order come from the IBIS 7.0 manual;
+        # all entries are corner triples (typ min max).
         [Model.Model_Spec.__param__]
         vinh = "corner"
         vinl = "corner"

@@ -54,8 +54,9 @@ mod header_field {
     /// Whether a keyword names a file header field (case-insensitive).
     ///
     /// Takes a keyword; returns `true` for known header fields such as
-    /// "IBIS ver" / "File name". 判定依据取自 [`ibis_schema.toml`](crate::schema) 的
-    /// `File_Header` 虚拟节段字段，不再硬编码。
+    /// "IBIS ver" / "File name". The decision is driven by the `File_Header`
+    /// virtual section fields declared in [`ibis_schema.toml`](crate::schema),
+    /// with no hard-coded list.
     pub(super) fn is_header_field_keyword(keyword: &str) -> bool {
         let normalized = normalize_keyword(keyword);
         file_header_section()
