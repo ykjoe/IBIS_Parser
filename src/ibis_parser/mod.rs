@@ -1,19 +1,64 @@
-//! IBIS parsing types (re-export compatibility layer).
+//! CLI framework for the `ibis_parser` binary.
 //!
-//! The numerically-typed strong model that used to live in
-//! `ibis2ibstoml::schema::keyword_hierarchy` no longer exists: the backend now
-//! produces the typed parsed tree (`ibis2ibstoml::backend::ParsedNode` and its
-//! value types). The old import paths are kept as aliases so existing consumers
-//! keep compiling:
+//! # Responsibilities
 //!
-//! - `ibis_parser::keyword_hierarchy` — the backend module with the parsed tree;
-//! - `ibis_parser::model` — legacy alias for the same module.
+//! - Own the runtime entry point [`run`].
+//! - Build the [`Logger`] from the global flags before running the pipeline.
+//! - Translate [`PipelineError`](crate::ibis_parser::cli::PipelineError) values
+//!   into process exit codes.
 //!
-//! Values stay text-only: quantities keep their original spelling and unit
-//! (`1.65V` stays `"1.65V"`), corners are `(typ, min, max)` triples and tables are
-//! `{ header, data }`.
+//! # Input / Output
+//!
+//! | Input | Output |
+//! |-------|--------|
+//! | Parsed [`CliCmds`] value | [`std::process::ExitCode`] |
+//!
+//! # Related modules
+//!
+//! - [`cli_commands`] — `clap` argument model.
+//! - [`cli`] — IBIS → TOML / Code Model orchestration.
+//! - [`logger`] — colored, level-filtered terminal output.
 
-pub use ibis2ibstoml::backend as keyword_hierarchy;
+// =============================================================================
+// Internal notes — the binary never calls `cli::run_pipeline` directly; routing
+// through [`run`] keeps failure logging and exit codes consistent.
+// =============================================================================
 
-// Compatibility alias for the legacy import path `ibis_parser::ibis_parser::model`.
-pub use ibis2ibstoml::backend as model;
+pub mod cli;
+pub mod cli_commands;
+pub mod logger;
+
+use std::process::ExitCode;
+
+use crate::ibis_parser::cli_commands::CliCmds;
+use crate::ibis_parser::logger::Logger;
+
+/// Executes one parsed command line and maps its outcome to an exit code.
+///
+/// # Parameters
+///
+/// * `cli_cmds` — The fully parsed [`CliCmds`] value produced by `clap`.
+///
+/// # Returns
+///
+/// * `ExitCode::SUCCESS` — Every requested output was written.
+/// * Another `ExitCode` — The pipeline failed; its message has already been
+///   printed to stderr.
+///
+/// # Errors
+///
+/// Does not return `Result`. Pipeline failures are logged through
+/// [`Logger::error`] and converted into the
+/// [`PipelineError`](crate::ibis_parser::cli::PipelineError) exit code.
+pub fn run(cli_cmds: CliCmds) -> ExitCode {
+    let logger = Logger::new(cli_cmds.global.log_level(), cli_cmds.global.no_color);
+    let pipeline_result = cli::run_pipeline(&cli_cmds, &logger);
+
+    match pipeline_result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(pipeline_error) => {
+            logger.error(&pipeline_error.message);
+            ExitCode::from(pipeline_error.exit_code)
+        }
+    }
+}

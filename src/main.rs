@@ -1,22 +1,12 @@
 //! IBIS Parser — command-line entry point.
 //!
-//! Parses a hard-coded sample IBIS file (`tests/examples/f103c8.ibs`) and writes
-//! the TOML output to `<input>.ibs.toml`.  This is a development/debugging binary;
-//! production use should call the library API [`ibis2ibstoml::ibs2ibstoml`]
-//! directly.
+//! Parses arguments with `clap` and delegates to [`ibis_parser::run`], which
+//! builds the logger and runs the conversion pipeline.
 
-use ibis2ibstoml::ibs2ibstoml;
+use clap::Parser;
+use ibis_parser::CliCmds;
 
-fn main() {
-    let path = "tests/examples/f103c8.ibs";
-    match ibs2ibstoml(path) {
-        Ok(toml_str) => {
-            // Write output to .ibs.toml
-            let out_path = format!("{}.toml", path);
-            std::fs::write(&out_path, &toml_str)
-                .expect("Failed to write output file");
-            println!("TOML output written to: {}", out_path);
-        }
-        Err(e) => eprintln!("Error: {}", e),
-    }
+fn main() -> std::process::ExitCode {
+    let cli_cmds = CliCmds::parse();
+    ibis_parser::run(cli_cmds)
 }

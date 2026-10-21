@@ -1,35 +1,38 @@
-//! IBIS Parser — Parse IBIS chip model description files and convert them to TOML.
+//! IBIS Parser — command-line front end for the `ibis2ibstoml` conversion pipeline.
 //!
-//! This library provides a complete IBIS 7.0 parsing pipeline, including lexical
-//! analysis, syntax analysis, and TOML serialization.
+//! Arguments are parsed with `clap` and progress is reported through a
+//! `colored`-based [`Logger`]. One IBIS input file can be exported to a TOML
+//! intermediate representation (`--toml`, written to `<INPUT_STEM>.ibs.toml`)
+//! and/or an ngspice Code Model C source (`--cm`, written to `<INPUT_STEM>.cm`)
+//! by [`cli::run_pipeline`].
 //!
-//! # Architecture
+//! # Examples
 //!
-//! The pipeline is split across two crates in a Cargo workspace:
-//!
-//! - `ibis2ibstoml` — Format reshaping + semantic layer (external crate). Its
-//!   `frontend` module uses a PEST grammar (with both lexical primitives and
-//!   specific keyword rules) for full parsing; its `backend` module rebuilds the
-//!   AST into a numerically-typed strong model (`IBIS_File`) through a
-//!   three-step pipeline (`keyword_valid` → `symbol_table_build` → `data_valid`)
-//!   with zero string pollution. Re-exported below as `ibis2ibstoml` for
-//!   compatibility.
-//! - [`ibis_parser`] — Re-export compatibility layer: `ibis_parser::ibis_structure`
-//!   re-exports the numerically-typed strong model from the `ibis2ibstoml` backend.
-//!
-//! # Quick Start
+//! Parse a command line without executing the pipeline:
 //!
 //! ```rust
-//! use ibis2ibstoml::parse_to_toml_lenient;
+//! use clap::Parser;
+//! use ibis_parser::CliCmds;
 //!
-//! let (toml_output, _report) = parse_to_toml_lenient(
-//!     "[IBIS ver] 2.1\n[File name] chip.ibs\n[File Rev] 1.0\n\
-//!      [Component] MyChip\n[Manufacturer] Acme\n[End]\n",
-//! )
-//! .expect("parsing failed");
-//! assert!(toml_output.contains("ibis_ver"));
+//! let cli_cmds = CliCmds::try_parse_from([
+//!     "ibis_parser",
+//!     "--quiet",
+//!     "chip.ibs",
+//!     "--toml",
+//! ])
+//! .expect("arguments should be valid");
+//! assert!(cli_cmds.global.quiet);
+//! assert!(cli_cmds.toml);
 //! ```
+
+// =============================================================================
+// Internal notes — this package ships both the `ibis_parser` library and the
+// binary. `src/main.rs` only parses `CliCmds` and calls [`run`].
+// =============================================================================
 
 pub mod ibis_parser;
 
-pub use ibis2ibstoml;
+pub use crate::ibis_parser::cli::{OutputTarget, PipelineError, run_pipeline};
+pub use crate::ibis_parser::cli_commands::{CliCmds, GlobalOptions};
+pub use crate::ibis_parser::logger::{LogLevel, Logger};
+pub use crate::ibis_parser::run;
