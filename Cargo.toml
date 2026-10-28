@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ibis2ibstoml"]
+members = ["crates/ibis2ibstoml", "crates/ibstoml_extrator"]
 resolver = "3"
 
 [package]
@@ -8,13 +8,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tauri = { version = "2.11.3", features = [] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.150"
-toml = "0.8"
+# local
 ibis2ibstoml = { path = "crates/ibis2ibstoml" }
+ibstoml_extrator = { path = "crates/ibstoml_extrator" }
+
+# cargo
 clap = { version = "4.5", features = ["derive"] }
 colored = "3.0"
-
-[build-dependencies]
-tauri-build = { version = "2.6" }
