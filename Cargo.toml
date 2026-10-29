@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ibis2ibstoml", "crates/ibstoml_extrator"]
+members = ["crates/ibis2ibstoml", "crates/ibstoml_extrator", "crates/ibstoml_schema"]
 resolver = "3"
 
 [package]
