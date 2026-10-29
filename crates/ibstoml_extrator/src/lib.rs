@@ -51,7 +51,7 @@ impl IbstomlMap {
     }
 
     // ============================================================
-    // # extrators
+    // # Helper Functions
     // 
     // ============================================================
 
@@ -138,7 +138,7 @@ impl IbstomlMap {
         Ok(text.to_string())
     }
 
-    pub fn extract_textlines(&self, keyword_path: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    fn extract_textlines(&self, keyword_path: &str) -> Result<Vec<String>, Box<dyn Error>> {
         let value = self.get_by_keyword_path(keyword_path)
             .ok_or_else(|| format!("Keyword path not found: {}", keyword_path))?;
         
@@ -155,15 +155,22 @@ impl IbstomlMap {
         Ok(lines)
     }
 
-    pub fn extract_table(&self, keyword_path: &str) {
+    fn extract_table(&self, keyword_path: &str) {
         
     }
 
-    pub fn extract_iv_table(&self, keyword_path: &str) {
+    fn extract_iv_table(&self, keyword_path: &str) {
 
     }
 
-    pub fn extract_vt_table(&self, keyword_path: &str) {
+    fn extract_vt_table(&self, keyword_path: &str) {
         
     }
+
+    // ============================================================
+    // # Extractors
+    // 
+    // ============================================================
+
+
 }

@@ -52,7 +52,7 @@
 
 > **状态：已废弃，本章规则不再适用。**
 >
-> 本项目曾用 pest 语法文件（`schema/ibis.pest`）承载词法原语与关键词识别。自 frontend 改为**直接从 [`ibis_schema.toml`](../crates/ibis2ibstoml/src/schema/ibis_schema.toml:1) 读取文档结构**后，crate 内**已不存在任何 `.pest` 文件**，`pest` / `pest_derive` 依赖也已移除，本章的全部规则因此失去约束对象。
+> 本项目曾用 pest 语法文件（`schema/ibis.pest`）承载词法原语与关键词识别。自 frontend 改为**直接从 [`ibis_schema.toml`](../crates/ibstoml_schema/src/ibis_schema.toml:1) 读取文档结构**后，crate 内**已不存在任何 `.pest` 文件**，`pest` / `pest_derive` 依赖也已移除，本章的全部规则因此失去约束对象。
 >
 > 旧语法仅作历史参考归档于 [`plans/legacy/ibis.pest`](legacy/ibis.pest:1)，**不参与编译，也不得重新接入构建**。新增或调整 IBIS 结构一律修改 `ibis_schema.toml`。
 >

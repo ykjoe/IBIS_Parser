@@ -29,8 +29,8 @@ pub use schema::{file_header_section, load_schema};
 
 /// Schema-level lookups — reach the whole tree and the virtual container.
 mod schema {
-    use crate::schema::loader::{file_header_container, top_level_sections};
-    use crate::schema::spec::SectionSpec;
+    use crate::loader::{file_header_container, top_level_sections};
+    use crate::spec::SectionSpec;
 
     /// Returns the top-level keyword sections of the schema.
     ///
@@ -72,7 +72,7 @@ mod schema {
 
 /// Keyword lookups — find sections by keyword, at a known scope or any depth.
 mod keyword {
-    use crate::schema::spec::{normalize_keyword, SectionSpec};
+    use crate::spec::{normalize_keyword, SectionSpec};
 
     /// Finds a top-level section by keyword.
     ///
@@ -203,7 +203,7 @@ mod keyword {
 
 /// Param lookups — find named sub-parameters inside one section.
 mod param {
-    use crate::schema::spec::{normalize_keyword, FieldSpec, SectionSpec};
+    use crate::spec::{normalize_keyword, FieldSpec, SectionSpec};
 
     /// Finds one named sub-parameter of a section.
     ///
@@ -214,7 +214,7 @@ mod param {
     ///
     /// # Returns
     ///
-    /// * `Some(&FieldSpec)` — The declared param with its [`ParamType`](crate::schema::ParamType).
+    /// * `Some(&FieldSpec)` — The declared param with its [`ParamType`](crate::ParamType).
     /// * `None` — The section does not declare this param.
     pub fn find_field<'a>(section: &'a SectionSpec, key: &str) -> Option<&'a FieldSpec> {
         let normalized = normalize_keyword(key);
@@ -227,7 +227,7 @@ mod param {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::{
+    use crate::{
         file_header_section, find_child, find_descendant, find_level, find_root, normalize_keyword,
         to_snake_key, HeaderFormat, Occurrence, ParamType, SectionFormat, SectionSpec,
     };

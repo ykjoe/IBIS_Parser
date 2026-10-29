@@ -241,7 +241,7 @@ mod types {
     /// Keyword levels — the nesting level of a keyword inside the schema tree.
     ///
     /// Levels are the only structural tag the pipeline carries: the syntax stage
-    /// derives them from [`find_level`](crate::schema::find_level), and tree
+    /// derives them from [`find_level`](crate::find_level), and tree
     /// building branches on them. All real levels belong to one family — the depth
     /// `N` inside the schema tree: [`ROOT`](keyword_level::ROOT) is `N = 1`,
     /// [`SECOND_LEVEL`](keyword_level::SECOND_LEVEL) is `N = 2`, a grandchild is

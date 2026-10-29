@@ -29,6 +29,13 @@
 
 use super::spec::SectionSpec;
 
+/// The IBIS structure source, embedded at compile time.
+///
+/// Exposed so a consumer that needs the raw structure data (for example an
+/// `.ibs.toml` extractor that mirrors the schema) reads the same bytes the
+/// loader parses.
+pub const SCHEMA_SOURCE: &str = cache::SCHEMA_SOURCE;
+
 /// Returns the top-level keyword sections of the cached schema.
 ///
 /// Takes no argument; returns them in `ibis_schema.toml` declaration order,
@@ -50,7 +57,7 @@ pub(super) fn file_header_container() -> &'static SectionSpec {
 mod cache {
     use std::sync::OnceLock;
 
-    use crate::schema::spec::{
+    use crate::spec::{
         FieldSpec, HeaderFormat, Occurrence, ParamType, SectionFormat, SectionSpec,
         FILE_HEADER_CONTAINER,
     };
@@ -58,7 +65,7 @@ mod cache {
     use super::section::{build_section, split_section_value};
 
     /// The schema source, embedded at compile time and parsed only once per process.
-    const SCHEMA_SOURCE: &str = include_str!("ibis_schema.toml");
+    pub(super) const SCHEMA_SOURCE: &str = include_str!("ibis_schema.toml");
 
     /// Process-wide cache of the parsed schema.
     static SCHEMA: OnceLock<SchemaTables> = OnceLock::new();
@@ -123,7 +130,7 @@ mod cache {
 
 /// Section reading — turn one TOML table into one [`SectionSpec`].
 mod section {
-    use crate::schema::spec::{
+    use crate::spec::{
         is_metadata_key, FieldSpec, HeaderFormat, Occurrence, SectionFormat, SectionSpec,
     };
 
@@ -276,7 +283,7 @@ mod section {
 /// vocabulary in its `ALL` table, so this module only resolves a spelling into its
 /// variant and, when it cannot, reports that same vocabulary.
 mod decode {
-    use crate::schema::spec::{HeaderFormat, ParamType, SectionFormat};
+    use crate::spec::{HeaderFormat, ParamType, SectionFormat};
 
     /// Renders the spellings one vocabulary accepts, for an error message.
     ///
